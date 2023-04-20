@@ -35,5 +35,8 @@
 		"vite": "^4.2.0",
 		"workbox-cli": "^6.5.4"
 	},
-	"type": "module"
+	"type": "module",
+	"dependencies": {
+		"@picocss/pico": "github:picocss/pico"
+	}
 }

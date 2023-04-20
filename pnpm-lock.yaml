@@ -1,5 +1,10 @@
 lockfileVersion: '6.0'
 
+dependencies:
+  '@picocss/pico':
+    specifier: github:picocss/pico
+    version: github.com/picocss/pico/0534acfa8d5e7151f0d75e71d4929d376986b2dc
+
 devDependencies:
   '@sveltejs/adapter-auto':
     specifier: ^2.0.0
@@ -5549,3 +5554,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
     dev: true
+
+  github.com/picocss/pico/0534acfa8d5e7151f0d75e71d4929d376986b2dc:
+    resolution: {tarball: https://codeload.github.com/picocss/pico/tar.gz/0534acfa8d5e7151f0d75e71d4929d376986b2dc}
+    name: '@picocss/pico'
+    version: 1.5.9
+    dev: false
