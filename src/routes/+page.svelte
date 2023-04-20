@@ -72,14 +72,14 @@
             </div>
             <section></section>
             <div class="grid">
-                <button on:click={resetFlag}></button>
+                <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
                 <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
-                <button on:click={rewind}>Go Back</button>
+                <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
             </div>
             <div class="grid">
-                <button on:click={slowDown} data-tooltip="Slow Down">🐢</button>
+                <button on:click={slowDown} data-tooltip="Slow Down ({getShortcut('slowDown')})">🐢</button>
                 <button>{Math.round(playbackRate * 10 ) * 10}%</button>
-                <button on:click={speedUp} data-tooltip="Speed Up">🐇</button>
+                <button on:click={speedUp} data-tooltip="Speed Up ({getShortcut('speedUp')})">🐇</button>
             </div>
     </article>
     {/if}
