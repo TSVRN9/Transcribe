@@ -44,7 +44,7 @@
     // extract this maybe?
     type ObjectKey = string | number | symbol;
     function invertObject<K extends ObjectKey, V extends ObjectKey>(o: Record<K, V>): Record<V, K> {
-        return Object.entries(o).reduce((p, [k, v]) => ({ ...p, v: k })) as Record<V, K>;
+        return Object.entries(o).reduce((p, [k, v]) => ({ ...p, v: k }), {}) as Record<V, K>;
     }
 
 </script>
