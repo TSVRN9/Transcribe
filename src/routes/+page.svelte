@@ -5,6 +5,7 @@
     // playback control
     let start = 0; // also for flag
     let playbackRate: number = 1, currentTime: number = 0, paused: boolean = true, volume: number = 1, muted: boolean = false;
+    const step = .1;
     
     // behavior
     type Behavior = 'flag' | 'resetFlag' | 'rewind' | 'speedUp' | 'slowDown' | 'togglePlayback';
@@ -13,8 +14,8 @@
         flag: () => start = currentTime,
         resetFlag: () => start = 0,
         rewind: () => currentTime = start,
-        speedUp: () => playbackRate += .1,
-        slowDown: () => playbackRate -= .1,
+        speedUp: () => playbackRate += step,
+        slowDown: () => { if (playbackRate - step > 0) playbackRate -= step },
         togglePlayback: () => paused = !paused,
     }
     
@@ -37,9 +38,8 @@
         return behaviorToShortcuts[b];
     }
 
-    function keyup(event: KeyboardEvent) {
+    document.onkeyup = (event: KeyboardEvent) => {
         const b = shortcuts[event.key];
-        console.log(b);
         if (b) behavior[b]();
     }
     
@@ -49,9 +49,15 @@
         return Object.entries(o).reduce((p, [k, v]) => ({ ...p, [v as V]: k }), {}) as Record<V, K>;
     }
 
+    function secondsToTime(e: number){
+        const h = Math.floor(e / 3600).toString().padStart(2,'0'),
+              m = Math.floor(e % 3600 / 60).toString().padStart(2,'0'),
+              s = Math.floor(e % 60).toString().padStart(2,'0');
+        
+        return h + ':' + m + ':' + s;
+        //return `${h}:${m}:${s}`;
+    }
 </script>
-
-<svelte:window on:keyup />
 
 <div>
     <article class="container">
@@ -74,7 +80,9 @@
                 />
                 <div />
             </div>
-            <section></section>
+            <section />
+            <div class="centered">🚩: {secondsToTime(start)}</div>
+            <section />
             <div class="grid">
                 <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
                 <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
@@ -88,3 +96,10 @@
     </article>
     {/if}
 </div>
+
+<style>
+    .centered {
+        text-align: center;
+        width: 100%;
+    }
+</style>
