@@ -31,6 +31,7 @@
     };
     
     const behaviorToShortcuts: Record<Behavior, string> = invertObject(shortcuts);
+    
 
     function getShortcut(b: Behavior) {
         return behaviorToShortcuts[b];
@@ -38,18 +39,21 @@
 
     function keyup(event: KeyboardEvent) {
         const b = shortcuts[event.key];
+        console.log(b);
         if (b) behavior[b]();
     }
     
     // extract this maybe?
     type ObjectKey = string | number | symbol;
     function invertObject<K extends ObjectKey, V extends ObjectKey>(o: Record<K, V>): Record<V, K> {
-        return Object.entries(o).reduce((p, [k, v]) => ({ ...p, v: k }), {}) as Record<V, K>;
+        return Object.entries(o).reduce((p, [k, v]) => ({ ...p, [v as V]: k }), {}) as Record<V, K>;
     }
 
 </script>
 
-<div on:keyup>
+<svelte:window on:keyup />
+
+<div>
     <article class="container">
         <div class="grid">
             <div />
