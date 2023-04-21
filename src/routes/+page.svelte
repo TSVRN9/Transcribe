@@ -1,11 +1,22 @@
 <script lang="ts">
-    let files: FileList | undefined;
-    $: audioFile = files == undefined ? undefined : files[0];
+    import { invertObject, secondsToTime } from './utils.ts';
+
+    let mode: 'local' | 'youtube' = 'local';
     
     // playback control
     let start = 0; // also for flag
-    let playbackRate: number = 1, currentTime: number = 0, paused: boolean = true, volume: number = 1, muted: boolean = false;
+    let playbackRate: number = 1, 
+        currentTime: number = 0, 
+        paused: boolean = true, 
+        volume: number = 1, 
+        muted: boolean = false,
+        isReady: boolean = false;
     const step = .1;
+
+    function handleReady(fromMode: 'local' | 'youtube', { isReady: boolean }) {
+        if (componentType === fromMode)
+            this.isReady = isReady;
+    }
     
     // behavior
     type Behavior = 'flag' | 'resetFlag' | 'rewind' | 'speedUp' | 'slowDown' | 'togglePlayback';
@@ -43,56 +54,37 @@
         if (b) behavior[b]();
     }
     
-    // extract this maybe?
-    type ObjectKey = string | number | symbol;
-    function invertObject<K extends ObjectKey, V extends ObjectKey>(o: Record<K, V>): Record<V, K> {
-        return Object.entries(o).reduce((p, [k, v]) => ({ ...p, [v as V]: k }), {}) as Record<V, K>;
-    }
-
-    function secondsToTime(e: number){
-        const h = Math.floor(e / 3600).toString().padStart(2,'0'),
-              m = Math.floor(e % 3600 / 60).toString().padStart(2,'0'),
-              s = Math.floor(e % 60).toString().padStart(2,'0');
-        
-        return h + ':' + m + ':' + s;
-        //return `${h}:${m}:${s}`;
-    }
 </script>
 
+{#if mode === 'local'}
+<LocalAudio 
+    bind:playbackRate
+    bind:currentTime
+    bind:paused
+    bind:volume
+    bind:muted
+    on:ready={e => handleReady('local', e)}
+/>
+{:else}
+{/if}
+
+
 <div>
+    {#if isReady}
     <article class="container">
+        <section />
+        <div class="centered">🚩: {secondsToTime(start)}</div>
+        <section />
         <div class="grid">
-            <div />
-            <input type="file" accept=".mp3, .ogg, .wav" bind:files>
-            <div />
+            <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
+            <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
+            <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
         </div>
-    </article>
-    {#if audioFile}
-    <article class="container">
-            <div class="grid">
-                <div />            
-                <audio controls src={URL.createObjectURL(audioFile)} 
-                    bind:playbackRate
-                    bind:currentTime
-                    bind:paused
-                    bind:volume
-                    bind:muted
-                />
-                <div />
-            </div>
-            <section />
-            <div class="centered">🚩: {secondsToTime(start)}</div>
-            <section />
-            <div class="grid">
-                <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
-                <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
-                <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
-            </div>
-            <div class="grid">
-                <button on:click={slowDown} data-tooltip="Slow Down ({getShortcut('slowDown')})">🐢</button>
-                <button>{Math.round(playbackRate * 10 ) * 10}%</button>
-                <button on:click={speedUp} data-tooltip="Speed Up ({getShortcut('speedUp')})">🐇</button>
-            </div>
+        <div class="grid">
+            <button on:click={slowDown} data-tooltip="Slow Down ({getShortcut('slowDown')})">🐢</button>
+            <button>{Math.round(playbackRate * 10 ) * 10}%</button>
+            <button on:click={speedUp} data-tooltip="Speed Up ({getShortcut('speedUp')})">🐇</button>
+        </div>
     </article>
     {/if}
 </div>
