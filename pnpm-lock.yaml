@@ -3,7 +3,7 @@ lockfileVersion: '6.0'
 dependencies:
   '@picocss/pico':
     specifier: github:picocss/pico
-    version: github.com/picocss/pico/0534acfa8d5e7151f0d75e71d4929d376986b2dc
+    version: github.com/picocss/pico/5ce6840d493fbe9bffc967bad22f90d737362fa9
 
 devDependencies:
   '@sveltejs/adapter-auto':
@@ -5555,8 +5555,8 @@ packages:
     engines: {node: '>=10'}
     dev: true
 
-  github.com/picocss/pico/0534acfa8d5e7151f0d75e71d4929d376986b2dc:
-    resolution: {tarball: https://codeload.github.com/picocss/pico/tar.gz/0534acfa8d5e7151f0d75e71d4929d376986b2dc}
+  github.com/picocss/pico/5ce6840d493fbe9bffc967bad22f90d737362fa9:
+    resolution: {tarball: https://codeload.github.com/picocss/pico/tar.gz/5ce6840d493fbe9bffc967bad22f90d737362fa9}
     name: '@picocss/pico'
-    version: 1.5.9
+    version: 1.5.10
     dev: false

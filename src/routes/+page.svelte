@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { onMount } from 'svelte';
+
     import LocalAudio from './LocalAudio.svelte';
     import { invertObject, secondsToTime } from './utils';
 
@@ -55,8 +57,9 @@
         if (b) behavior[b]();
     }
     
-    document.addEventListener('keyup', keyup);
-    
+    onMount(() => {
+        document.addEventListener('keyup', keyup);
+    });
 </script>
 
 {#if mode === 'local'}

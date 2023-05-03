@@ -13,6 +13,13 @@ export default defineConfig({
 				display: 'standalone',
 				theme_color: "#000000",
 				background_color: "#000000",
+				icons: [
+					{
+						src: './400x400.png',
+						sizes: '400x400',
+						type: 'image/png'
+					}
+				]
 //				icons: [
 //					{
 //						src: '/pwa-192x192.png',
