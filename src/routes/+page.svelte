@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { invertObject, secondsToTime } from './utils.ts';
+    import LocalAudio from './LocalAudio.svelte';
+    import { invertObject, secondsToTime } from './utils';
 
     let mode: 'local' | 'youtube' = 'local';
     
@@ -13,9 +14,9 @@
         isReady: boolean = false;
     const step = .1;
 
-    function handleReady(fromMode: 'local' | 'youtube', { isReady: boolean }) {
-        if (componentType === fromMode)
-            this.isReady = isReady;
+    function handleReady(fromMode: 'local' | 'youtube', e: CustomEvent<boolean>) {
+        if (mode === fromMode)
+            isReady = e.detail;
     }
     
     // behavior
@@ -49,10 +50,12 @@
         return behaviorToShortcuts[b];
     }
 
-    document.onkeyup = (event: KeyboardEvent) => {
+    function keyup(event: KeyboardEvent) { 
         const b = shortcuts[event.key];
         if (b) behavior[b]();
     }
+    
+    document.addEventListener('keyup', keyup);
     
 </script>
 
@@ -65,7 +68,6 @@
     bind:muted
     on:ready={e => handleReady('local', e)}
 />
-{:else}
 {/if}
 
 
