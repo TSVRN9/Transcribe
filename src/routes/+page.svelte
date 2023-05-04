@@ -27,7 +27,15 @@
     const behavior: Record<Behavior, VoidFunction> = {
         flag: () => start = currentTime,
         resetFlag: () => start = 0,
-        rewind: () => currentTime = start,
+        rewind: () => {
+            if (paused) {
+                currentTime = start;
+            } else {
+                paused = true;
+                currentTime = start;
+                paused = false;
+            }
+        },
         speedUp: () => playbackRate += step,
         slowDown: () => { if (playbackRate - step > 0) playbackRate -= step },
         togglePlayback: () => paused = !paused,
