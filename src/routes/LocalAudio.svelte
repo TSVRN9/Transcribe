@@ -1,16 +1,27 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { createEventDispatcher, tick } from 'svelte';
     const dispatch = createEventDispatcher<{ready: boolean}>();
 
     let files: FileList | undefined;
     $: audioFile = files == undefined ? undefined : files[0];
     $: dispatch('ready', !!audioFile);
 
+    let time: number = 0;
+    
     export let playbackRate: number = 1, 
         currentTime: number = 0, 
         paused: boolean = true, 
         volume: number = 1, 
         muted: boolean = false; 
+    
+    async function setTime(n: number) {
+        await tick();
+        time = n;
+        paused = false;
+    }
+
+    $: setTime(currentTime);
+    $: currentTime = time;
 </script>
 
 <!-- Input -->
@@ -26,7 +37,7 @@
         <div />            
         <audio controls src={URL.createObjectURL(audioFile)} 
             bind:playbackRate
-            bind:currentTime
+            bind:currentTime={time}
             bind:paused
             bind:volume
             bind:muted

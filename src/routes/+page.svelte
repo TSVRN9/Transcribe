@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from 'svelte';
+    import { tick } from 'svelte';
 
     import LocalAudio from './LocalAudio.svelte';
     import { invertObject, secondsToTime } from './utils';
@@ -27,14 +28,9 @@
     const behavior: Record<Behavior, VoidFunction> = {
         flag: () => start = currentTime,
         resetFlag: () => start = 0,
-        rewind: () => {
-            if (paused) {
-                currentTime = start;
-            } else {
-                paused = true;
-                currentTime = start;
-                paused = false;
-            }
+        rewind: async () => {
+            await tick();
+            currentTime = start;
         },
         speedUp: () => playbackRate += step,
         slowDown: () => { if (playbackRate - step > 0) playbackRate -= step },
