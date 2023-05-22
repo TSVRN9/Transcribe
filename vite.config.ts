@@ -7,7 +7,10 @@ export default defineConfig({
 		sveltekit(),
 		SvelteKitPWA({
 			base: '/Transcribe',
+			injectRegister: 'auto',
+			registerType: 'autoUpdate',
 			manifest: {
+				scope: '/Transcribe',
 				short_name: 'Transcribe',
 				name: 'Transcribe',
 				display: 'standalone',
@@ -15,29 +18,22 @@ export default defineConfig({
 				background_color: "#000000",
 				icons: [
 					{
-						src: './400x400.png',
-						sizes: '400x400',
-						type: 'image/png'
-					}
-				]
-//				icons: [
-//					{
-//						src: '/pwa-192x192.png',
-//						sizes: '192x192',
-//						type: 'image/png',
-//					},
-//					{
-//						src: '/pwa-512x512.png',
-//						sizes: '512x512',
-//						type: 'image/png',
-//					},
-//					{
-//						src: '/pwa-512x512.png',
-//						sizes: '512x512',
-//						type: 'image/png',
-//						purpose: 'any maskable',
-//					},
-//				],
+						src: './pwa-192x192.png',
+						sizes: '192x192',
+						type: 'image/png',
+					},
+					{
+						src: './pwa-512x512.png',
+						sizes: '512x512',
+						type: 'image/png',
+					},
+					{
+						src: './pwa-512x512.png',
+						sizes: '512x512',
+						type: 'image/png',
+						purpose: 'any maskable',
+					},
+				],
 			},
 			injectManifest: {
 				globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,woff,woff2}']
