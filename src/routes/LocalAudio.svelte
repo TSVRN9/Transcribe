@@ -25,24 +25,22 @@
 </script>
 
 <!-- Input -->
-<article class="container">
-    <div class="grid">
-        <div />
-        <input type="file" accept=".mp3, .ogg, .wav" bind:files>
-        <div />
-    </div>
-    <!-- Source -->
-    {#if audioFile}
-    <div class="grid">
-        <div />            
-        <audio controls src={URL.createObjectURL(audioFile)} 
-            bind:playbackRate
-            bind:currentTime={time}
-            bind:paused
-            bind:volume
-            bind:muted
-        />
-        <div />
-    </div>
-    {/if}
-</article>
+<div class="grid">
+    <div />
+    <input type="file" accept=".mp3, .ogg, .wav" bind:files>
+    <div />
+</div>
+<!-- Source -->
+{#if audioFile}
+<div class="grid">
+    <div />            
+    <audio controls src={URL.createObjectURL(audioFile)} 
+        bind:playbackRate
+        bind:currentTime={time}
+        bind:paused
+        bind:volume
+        bind:muted
+    />
+    <div />
+</div>
+{/if}

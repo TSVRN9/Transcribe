@@ -3,6 +3,7 @@
     import { tick } from 'svelte';
 
     import LocalAudio from './LocalAudio.svelte';
+	import YoutubeAudio from './YoutubeAudio.svelte';
     import { invertObject, secondsToTime } from './utils';
 
     let mode: 'local' | 'youtube' = 'local';
@@ -66,18 +67,30 @@
     });
 </script>
 
-{#if mode === 'local'}
-<LocalAudio 
-    bind:playbackRate
-    bind:currentTime
-    bind:paused
-    bind:volume
-    bind:muted
-    on:ready={e => handleReady('local', e)}
-/>
-{/if}
-
-
+<article class="container">
+    <button on:click={() => mode = mode == 'local' ? 'youtube' : 'local'}>Change Source</button>
+</article>
+<article class="container">
+    {#if mode === 'local'}
+        <LocalAudio 
+            bind:playbackRate
+            bind:currentTime
+            bind:paused
+            bind:volume
+            bind:muted
+            on:ready={e => handleReady('local', e)}
+        />
+    {:else if mode === 'youtube'}
+        <YoutubeAudio 
+            bind:playbackRate
+            bind:currentTime
+            bind:paused
+            bind:volume
+            bind:muted
+            on:ready={e => handleReady('youtube', e)}
+        />
+    {/if}
+</article>
 <div>
     {#if isReady}
     <article class="container">
@@ -85,9 +98,9 @@
         <div class="centered">🚩: {secondsToTime(start)}</div>
         <section />
         <div class="grid">
-            <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
-            <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
             <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
+            <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
+            <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
         </div>
         <div class="grid">
             <button on:click={slowDown} data-tooltip="Slow Down ({getShortcut('slowDown')})">🐢</button>
