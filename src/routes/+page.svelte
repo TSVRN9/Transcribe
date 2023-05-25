@@ -15,12 +15,15 @@
         paused: boolean = true, 
         volume: number = 1, 
         muted: boolean = false,
-        isReady: boolean = false;
+        isReady: boolean = false,
+        audiolength: number = 0;
     const step = .1;
 
-    function handleReady(fromMode: 'local' | 'youtube', e: CustomEvent<boolean>) {
-        if (mode === fromMode)
-            isReady = e.detail;
+    function handleReady(fromMode: 'local' | 'youtube', e: CustomEvent<{isReady: boolean, audioLength: number}>) {
+        if (mode === fromMode) {
+            isReady = e.detail.isReady;
+            audiolength = e.detail.audioLength;
+        }
     }
     
     // behavior
@@ -97,6 +100,9 @@
         <section />
         <div class="centered">🚩: {secondsToTime(start)}</div>
         <section />
+        <div class="grid">
+            <input type="range" bind:value={currentTime} min="0" max={audiolength}/>
+        </div>
         <div class="grid">
             <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
             <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>

@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { createEventDispatcher, tick } from 'svelte';
-    const dispatch = createEventDispatcher<{ready: boolean}>();
+    const dispatch = createEventDispatcher<{ready: {isReady: boolean, audioLength: number}}>();
 
     let files: FileList | undefined;
     $: audioFile = files == undefined ? undefined : files[0];
-    $: dispatch('ready', !!audioFile);
+    $: dispatch('ready', {
+        isReady: !!audioFile,
+        audioLength: audioFile ? duration : 0
+    });
 
     let time: number = 0;
+    let duration: number = 0;
     
     export let playbackRate: number = 1, 
         currentTime: number = 0, 
@@ -40,6 +44,7 @@
         bind:paused
         bind:volume
         bind:muted
+        bind:duration
     />
     <div />
 </div>
