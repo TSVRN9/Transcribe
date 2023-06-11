@@ -2,19 +2,24 @@
 	import { onMount, afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
 	// @ts-ignore
     import type YT from 'youtube';
+	import { placeholderSeek, type AudioReady, type AudioCurrentTime } from './audio';
 
 	export let playbackRate: number;
-	export let currentTime: number;
 	export let paused: boolean;
 	export let volume: number;
 	export let muted: boolean;
 
-    const dispatch = createEventDispatcher<{ready: {isReady: boolean, audioLength: number}}>();
+    const readyDispatch = createEventDispatcher<AudioReady>();
+    const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
 	
 	let tag: HTMLScriptElement;
 
 	let videoLink = '';
-	$: videoId = videoLink ? new URLSearchParams(new URL(videoLink).search).get('v') : undefined;
+	$: videoId = () => {
+		try {
+			videoLink ? new URLSearchParams(new URL(videoLink).search).get('v') : undefined;
+		} catch (e) {}
+	}
 	let player: YT.Player | undefined;
 	let error = '';
 	let intervalId: NodeJS.Timer;
@@ -39,21 +44,25 @@
 			events: {
 				onReady: () => {
 					player = youtubePlayer;
-					dispatch('ready', {
+					readyDispatch('ready', {
 						isReady: true,
-						audioLength: youtubePlayer.getDuration()
+						audioLength: youtubePlayer.getDuration(),
+						seek: (time: number) => {
+							player.seekTo(time);
+						}
 					});
 				},
 				onError: (event: any) => {
 					error = 'Error: Unable to play the video.';
 					console.error('YouTube Player Error:', event.data);
-					dispatch('ready', {
+					readyDispatch('ready', {
 						isReady: false,
-						audioLength: 0
+						audioLength: 0,
+						seek: placeholderSeek
 					});
 				},
 				onStateChange: (event: any) => {
-					paused = event.data != YT.PlayerState.PLAYING;
+					paused = event.data == YT.PlayerState.PAUSED;
 				}
 			}
 		});
@@ -66,9 +75,11 @@
 		const head = document.head || document.getElementsByTagName('head')[0];
 		head.appendChild(tag);
 
-		intervalId = setInterval(async () => {
-			await tick();
-			currentTime = player?.getCurrentTime();
+		intervalId = setInterval(() => {
+			if (player)
+				currentTimeDispatch('currentTime', {
+					currentTime: player.getCurrentTime() 
+				})
 		}, 50);
 	});
 
@@ -82,18 +93,14 @@
 	afterUpdate(async () => {
  		if (player) {
 			await tick();
-			const epsilon = .5;
-			if (player.getCurrentTime() > currentTime + epsilon || player.getCurrentTime() < currentTime - epsilon) {
-				player.seekTo(currentTime, true);
-			}
 			if (player.getPlaybackRate() != playbackRate) {
 				player.setPlaybackRate(playbackRate);
 			}
-// 			if (paused) {
-// 				player.pauseVideo();
-// 			} else {
-// 				player.playVideo();
-// 			}
+ 			if (paused) {
+ 				player.pauseVideo();
+ 			} else {
+ 				player.playVideo();
+ 			}
 			player.setVolume(volume * 100);
 			if (muted) {
 				player.mute();

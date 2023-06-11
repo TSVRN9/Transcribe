@@ -1,10 +1,10 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import { tick } from 'svelte';
 
     import LocalAudio from './LocalAudio.svelte';
 	import YoutubeAudio from './YoutubeAudio.svelte';
     import { invertObject, secondsToTime } from './utils';
+	import { placeholderSeek, type AudioReadyDetail, type SeekFunction } from './audio';
 
     let mode: 'local' | 'youtube' = 'local';
     
@@ -16,13 +16,15 @@
         volume: number = 1, 
         muted: boolean = false,
         isReady: boolean = false,
-        audiolength: number = 0;
+        audiolength: number = 0,
+        seek: SeekFunction = placeholderSeek;
     const step = .1;
 
-    function handleReady(fromMode: 'local' | 'youtube', e: CustomEvent<{isReady: boolean, audioLength: number}>) {
+    function handleReady(fromMode: 'local' | 'youtube', e: CustomEvent<AudioReadyDetail>) {
         if (mode === fromMode) {
             isReady = e.detail.isReady;
             audiolength = e.detail.audioLength;
+            seek = e.detail.seek;
         }
     }
     
@@ -32,9 +34,8 @@
     const behavior: Record<Behavior, VoidFunction> = {
         flag: () => start = currentTime,
         resetFlag: () => start = 0,
-        rewind: async () => {
-            await tick();
-            currentTime = start;
+        rewind: () => {
+            seek(start);
         },
         speedUp: () => playbackRate += step,
         slowDown: () => { if (playbackRate - step > 0) playbackRate -= step },
@@ -77,20 +78,20 @@
     {#if mode === 'local'}
         <LocalAudio 
             bind:playbackRate
-            bind:currentTime
             bind:paused
             bind:volume
             bind:muted
             on:ready={e => handleReady('local', e)}
+            on:currentTime={e => currentTime = e.detail.currentTime }
         />
     {:else if mode === 'youtube'}
         <YoutubeAudio 
             bind:playbackRate
-            bind:currentTime
             bind:paused
             bind:volume
             bind:muted
             on:ready={e => handleReady('youtube', e)}
+            on:currentTime={e => currentTime = e.detail.currentTime }
         />
     {/if}
 </article>
@@ -98,14 +99,19 @@
     {#if isReady}
     <article class="container">
         <section />
+        <div class="centered">⏱️: {secondsToTime(currentTime)}</div>
         <div class="centered">🚩: {secondsToTime(start)}</div>
         <section />
         <div class="grid">
-            <input type="range" bind:value={currentTime} min="0" max={audiolength}/>
+            <input type="range" value={currentTime} on:input={e => {
+                // @ts-ignore
+                seek(e.target.value);
+            }} min="0" max={audiolength}/>
         </div>
         <div class="grid">
             <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
             <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
+            <button on:click={togglePlayback} data-tooltip="Pause/Unpause ({getShortcut('togglePlayback')})">{paused ? '▶️' : '⏸'}</button>
             <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
         </div>
         <div class="grid">

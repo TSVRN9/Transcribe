@@ -1,19 +1,24 @@
 <script lang="ts">
 	import { createEventDispatcher, tick } from 'svelte';
-    const dispatch = createEventDispatcher<{ready: {isReady: boolean, audioLength: number}}>();
+	import type { AudioCurrentTime, AudioReady } from './audio';
+    const readyDispatch = createEventDispatcher<AudioReady>();
+    const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
 
     let files: FileList | undefined;
     $: audioFile = files == undefined ? undefined : files[0];
-    $: dispatch('ready', {
+    $: readyDispatch('ready', {
         isReady: !!audioFile,
-        audioLength: audioFile ? duration : 0
+        audioLength: audioFile ? duration : 0,
+        seek: (time: number) => {
+            setTime(time);
+        },
     });
 
+    let currentTime: number = 0;
     let time: number = 0;
     let duration: number = 0;
     
     export let playbackRate: number = 1, 
-        currentTime: number = 0, 
         paused: boolean = true, 
         volume: number = 1, 
         muted: boolean = false; 
@@ -21,7 +26,7 @@
     async function setTime(n: number) {
         await tick();
         time = n;
-        paused = false;
+        currentTimeDispatch('currentTime', { currentTime });
     }
 
     $: setTime(currentTime);
