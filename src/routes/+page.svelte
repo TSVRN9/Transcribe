@@ -29,10 +29,11 @@
     }
     
     // behavior
-    type Behavior = 'flag' | 'resetFlag' | 'rewind' | 'speedUp' | 'slowDown' | 'togglePlayback';
+    type Behavior = 'flag' | 'pushFlagBack' | 'resetFlag' | 'rewind' | 'speedUp' | 'slowDown' | 'togglePlayback';
     
     const behavior: Record<Behavior, VoidFunction> = {
         flag: () => start = currentTime,
+        pushFlagBack: () => start = Math.max(0, start - 1),
         resetFlag: () => start = 0,
         rewind: async () => {
             await tick();
@@ -43,11 +44,12 @@
         togglePlayback: () => paused = !paused,
     }
     
-    const { flag, resetFlag, rewind, speedUp, slowDown, togglePlayback } = behavior;
+    const { flag, resetFlag, rewind, speedUp, slowDown, togglePlayback, pushFlagBack } = behavior;
     
     // shortcuts
     const shortcuts: Record<string, Behavior> = {
         'v': 'resetFlag',
+        's': 'pushFlagBack',
         'f': 'flag',
         'r': 'rewind',
         '>': 'speedUp',
@@ -111,6 +113,7 @@
         </div>
         <div class="grid">
             <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
+            <button on:click={rewind} data-tooltip="Push Flag Back ({getShortcut('pushFlagBack')})">◀️</button>
             <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
             <button on:click={togglePlayback} data-tooltip="Pause/Unpause ({getShortcut('togglePlayback')})">{paused ? '▶️' : '⏸'}</button>
             <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
