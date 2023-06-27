@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
 
     import LocalAudio from './LocalAudio.svelte';
 	import YoutubeAudio from './YoutubeAudio.svelte';
@@ -34,7 +34,8 @@
     const behavior: Record<Behavior, VoidFunction> = {
         flag: () => start = currentTime,
         resetFlag: () => start = 0,
-        rewind: () => {
+        rewind: async () => {
+            await tick();
             seek(start);
         },
         speedUp: () => playbackRate += step,
