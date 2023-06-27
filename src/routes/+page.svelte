@@ -9,7 +9,7 @@
     let mode: 'local' | 'youtube' = 'local';
     
     // playback control
-    let start = 0; // also for flag
+    let flag = 0; // also for flag
     let playbackRate: number = 1, 
         currentTime: number = 0, 
         paused: boolean = true, 
@@ -29,28 +29,28 @@
     }
     
     // behavior
-    type Behavior = 'flag' | 'pushFlagBack' | 'resetFlag' | 'rewind' | 'speedUp' | 'slowDown' | 'togglePlayback';
+    type Behavior = 'placeFlag' | 'pushFlagBack' | 'resetFlag' | 'rewind' | 'speedUp' | 'slowDown' | 'togglePlayback';
     
     const behavior: Record<Behavior, VoidFunction> = {
-        flag: () => start = currentTime,
-        pushFlagBack: () => start = Math.max(0, start - 1),
-        resetFlag: () => start = 0,
+        placeFlag: () => flag = currentTime,
+        pushFlagBack: () => flag = Math.max(0, flag - 1),
+        resetFlag: () => flag = 0,
         rewind: async () => {
             await tick();
-            seek(start);
+            seek(flag);
         },
         speedUp: () => playbackRate += step,
         slowDown: () => { if (playbackRate - step > 0) playbackRate -= step },
         togglePlayback: () => paused = !paused,
     }
     
-    const { flag, resetFlag, rewind, speedUp, slowDown, togglePlayback, pushFlagBack } = behavior;
+    const { placeFlag, resetFlag, rewind, speedUp, slowDown, togglePlayback, pushFlagBack } = behavior;
     
     // shortcuts
     const shortcuts: Record<string, Behavior> = {
         'v': 'resetFlag',
         's': 'pushFlagBack',
-        'f': 'flag',
+        'f': 'placeFlag',
         'r': 'rewind',
         '>': 'speedUp',
         '<': 'slowDown',
@@ -103,7 +103,7 @@
     <article class="container">
         <section />
         <div class="centered">⏱️: {secondsToTime(currentTime)}</div>
-        <div class="centered">🚩: {secondsToTime(start)}</div>
+        <div class="centered">🚩: {secondsToTime(flag)}</div>
         <section />
         <div class="grid">
             <input type="range" value={currentTime} on:input={e => {
@@ -113,8 +113,8 @@
         </div>
         <div class="grid">
             <button on:click={rewind} data-tooltip="Go Back ({getShortcut('rewind')})">⏮</button>
-            <button on:click={rewind} data-tooltip="Push Flag Back ({getShortcut('pushFlagBack')})">◀️</button>
-            <button on:click={flag} data-tooltip="Flag ({getShortcut('flag')})">🚩</button>
+            <button on:click={pushFlagBack} data-tooltip="Push Flag Back ({getShortcut('pushFlagBack')})">◀️</button>
+            <button on:click={placeFlag} data-tooltip="Flag ({getShortcut('placeFlag')})">🚩</button>
             <button on:click={togglePlayback} data-tooltip="Pause/Unpause ({getShortcut('togglePlayback')})">{paused ? '▶️' : '⏸'}</button>
             <button on:click={resetFlag} data-tooltip="Reset Flag ({getShortcut('resetFlag')})">❌</button>
         </div>
