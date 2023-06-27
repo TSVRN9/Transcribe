@@ -15,21 +15,24 @@
 	let tag: HTMLScriptElement;
 
 	let videoLink = '';
-	$: videoId = () => {
+	$: videoId = (() => {
 		try {
-			videoLink ? new URLSearchParams(new URL(videoLink).search).get('v') : undefined;
+			return videoLink ? new URLSearchParams(new URL(videoLink).search).get('v') : undefined;
 		} catch (e) {}
-	}
+	})();
 	let player: YT.Player | undefined;
 	let error = '';
 	let intervalId: NodeJS.Timer;
 
 	const loadVideo = () => {
+		console.log(videoId);
 		if (!videoId) {
 			return;
 		}
 
 		const youtubePlayer = new YT.Player('youtube-player', {
+			width: 1,
+			height: 1,
 			videoId,
 			playerVars: {
 				autoplay: 1,
@@ -120,11 +123,7 @@
 	<button on:click={loadVideo}>Load Video</button>
 </div>
 
-<div>
-	<section />
-	<div id="youtube-player" />
-	<section />
-</div>
+<div id="youtube-player" />
 
 {#if error}
 	<div>{error}</div>
