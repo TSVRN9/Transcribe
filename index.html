@@ -11,49 +11,46 @@
 		<link rel="icon" href="./favicon.png" />
 		<link rel="stylesheet" href="https://unpkg.com/@picocss/pico@latest/css/pico.min.css">
 		<meta name="viewport" content="width=device-width" />
-		<meta http-equiv="content-security-policy" content="">
-		<link href="./_app/immutable/assets/_page-d75f51ba.css" rel="stylesheet">
-		<link rel="modulepreload" href="./_app/immutable/start-b52c8fdd.js">
-		<link rel="modulepreload" href="./_app/immutable/chunks/index-f4f4a71f.js">
-		<link rel="modulepreload" href="./_app/immutable/chunks/singletons-a49b75e8.js">
-		<link rel="modulepreload" href="./_app/immutable/components/layout.svelte-cf7ba9c9.js">
-		<link rel="modulepreload" href="./_app/immutable/modules/pages/_layout.ts-5612100c.js">
-		<link rel="modulepreload" href="./_app/immutable/chunks/_layout-79cb23d1.js">
-		<link rel="modulepreload" href="./_app/immutable/components/pages/_page.svelte-e7339261.js">
+		
+		<link href="./_app/immutable/assets/2.d75f51ba.css" rel="stylesheet">
+		<link rel="modulepreload" href="./_app/immutable/entry/start.010e961d.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/scheduler.782c3151.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/singletons.26e3e017.js">
+		<link rel="modulepreload" href="./_app/immutable/entry/app.5cbb0fa8.js">
+		<link rel="modulepreload" href="./_app/immutable/chunks/index.549c4d75.js">
+		<link rel="modulepreload" href="./_app/immutable/nodes/0.a4dfe343.js">
+		<link rel="modulepreload" href="./_app/immutable/nodes/2.b790007f.js"><!-- HEAD_svelte-9j5arz_START --><!-- HTML_TAG_START --><link rel="manifest" href="/Transcribe/manifest.webmanifest"><!-- HTML_TAG_END --><!-- HEAD_svelte-9j5arz_END -->
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<main>
-			<div style="display: contents">
+			<div style="display: contents">   <article class="container"><button data-svelte-h="svelte-svyboe">Change Source</button></article> <article class="container"> <div class="grid"><div></div> <input type="file" accept=".mp3, .ogg, .wav"> <div></div></div>  </article> <div> </div> 
+			
+			<script>
+				{
+					__sveltekit_179f3qw = {
+						assets: "/Transcribe",
+						base: new URL(".", location).pathname.slice(0, -1),
+						env: {}
+					};
 
+					const element = document.currentScript.parentElement;
 
-<article class="container"><button>Change Source</button></article>
-<article class="container">
-<div class="grid"><div></div>
-    <input type="file" accept=".mp3, .ogg, .wav">
-    <div></div></div>
+					const data = [null,null];
 
-</article>
-<div>
-</div>
-
-
-		<script type="module" data-sveltekit-hydrate="f5rhmd">
-			import { start } from "./_app/immutable/start-b52c8fdd.js";
-
-			start({
-				assets: "",
-				env: {},
-				target: document.querySelector('[data-sveltekit-hydrate="f5rhmd"]').parentNode,
-				version: "1687880913112",
-				hydrate: {
-					node_ids: [0, 2],
-					data: [null,null],
-					form: null,
-					error: null
+					Promise.all([
+						import("./_app/immutable/entry/start.010e961d.js"),
+						import("./_app/immutable/entry/app.5cbb0fa8.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element, {
+							node_ids: [0, 2],
+							data,
+							form: null,
+							error: null
+						});
+					});
 				}
-			});
-		</script>
-	</div>
+			</script>
+		</div>
 		</main>
 	</body>
 </html>
