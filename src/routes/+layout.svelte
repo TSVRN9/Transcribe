@@ -7,3 +7,5 @@
 <svelte:head> 
  	{@html webManifestLink} 
 </svelte:head>
+
+<slot />
