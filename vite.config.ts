@@ -6,7 +6,7 @@ export default defineConfig({
 	plugins: [
 		sveltekit(),
 		SvelteKitPWA({
-			base: '/Transcribe',
+			base: '/Transcribe/',
 			injectRegister: 'auto',
 			registerType: 'autoUpdate',
 			manifest: {
