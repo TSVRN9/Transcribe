@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
 	// @ts-ignore
-    import type YT from 'youtube';
+    import YT from 'youtube';
 	import { placeholderSeek, type AudioReady, type AudioCurrentTime } from './audio';
 
 	export let playbackRate: number;
@@ -17,12 +17,19 @@
 	let videoLink = '';
 	$: videoId = (() => {
 		try {
-			return videoLink ? new URLSearchParams(new URL(videoLink).search).get('v') : undefined;
-		} catch (e) {}
+			const url = new URL(videoLink);
+			if (url.hostname == 'youtu.be') {
+				return url.pathname.substring(1);
+			} else {
+				return videoLink ? new URLSearchParams(url.search).get('v') : undefined;
+			}
+		} catch (e) {
+			return undefined;
+		}
 	})();
 	let player: YT.Player | undefined;
 	let error = '';
-	let intervalId: NodeJS.Timer;
+	let intervalId: number;
 
 	const loadVideo = () => {
 		console.log(videoId);
