@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
 	// @ts-ignore
-    import YT from 'youtube';
+    import type YT from 'youtube';
 	import { placeholderSeek, type AudioReady, type AudioCurrentTime } from './audio';
 
 	export let playbackRate: number;
