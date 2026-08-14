@@ -7,8 +7,8 @@
 	export let volume: number;
 	export let muted: boolean;
 
-    const readyDispatch = createEventDispatcher<AudioReady>();
-    const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
+	const readyDispatch = createEventDispatcher<AudioReady>();
+	const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
 
 	let tag: HTMLScriptElement | undefined;
 	let apiReady = false;
@@ -90,7 +90,9 @@
 		if (typeof YT !== 'undefined' && YT.Player) {
 			apiReady = true;
 		} else {
-			(window as any).onYouTubeIframeAPIReady = () => { apiReady = true; };
+			(window as any).onYouTubeIframeAPIReady = () => {
+				apiReady = true;
+			};
 			if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
 				tag = document.createElement('script');
 				tag.src = 'https://www.youtube.com/iframe_api';
@@ -102,7 +104,7 @@
 			if (player)
 				currentTimeDispatch('currentTime', {
 					currentTime: player.getCurrentTime()
-				})
+				});
 		}, 50);
 	});
 
@@ -110,34 +112,42 @@
 		player?.destroy();
 		tag?.remove();
 		clearInterval(intervalId);
-	})
+	});
 
 	afterUpdate(() => {
- 		if (player) {
+		if (player) {
 			if (player.getPlaybackRate() != playbackRate) {
 				player.setPlaybackRate(playbackRate);
 			}
- 			if (paused) {
- 				player.pauseVideo();
- 			} else {
- 				player.playVideo();
- 			}
+			if (paused) {
+				player.pauseVideo();
+			} else {
+				player.playVideo();
+			}
 			player.setVolume(volume * 100);
 			if (muted) {
 				player.mute();
 			} else {
 				player.unMute();
-			};
+			}
 		}
 	});
 </script>
 
 <div class="flex gap-2">
-	<input type="text" bind:value={videoLink} placeholder="Paste YouTube link"
+	<input
+		type="text"
+		bind:value={videoLink}
+		placeholder="Paste YouTube link"
 		on:keydown={(e) => e.key === 'Enter' && loadVideo()}
-		class="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
-	<button on:click={loadVideo} disabled={!apiReady} aria-busy={!apiReady}
-		class="shrink-0 rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50">
+		class="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+	/>
+	<button
+		on:click={loadVideo}
+		disabled={!apiReady}
+		aria-busy={!apiReady}
+		class="shrink-0 rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+	>
 		{apiReady ? 'Load Video' : 'Loading player…'}
 	</button>
 </div>

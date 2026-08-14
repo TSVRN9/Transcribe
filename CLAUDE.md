@@ -27,15 +27,16 @@ There is no test runner configured in this project.
 **State ownership.** `src/routes/+page.svelte` is the single owner of all playback state (`currentTime`, `paused`, `volume`, `muted`, `playbackRate`, `flag`, `isReady`, `audiolength`, `seek`). It also defines the shortcut system: a `Behavior` union type, a `behavior: Record<Behavior, VoidFunction>` map of implementations, and a `shortcuts: Record<string, Behavior>` map from keyboard keys to behaviors. `invertObject` (in `utils.ts`) builds the reverse lookup used to show shortcut keys in tooltips and the keyboard-shortcuts legend.
 
 **Swappable audio sources.** `+page.svelte` toggles between `LocalAudio.svelte` and `YoutubeAudio.svelte` via a `mode: 'local' | 'youtube'` flag (see `setMode`, which resets `isReady`/`currentTime`/`flag` on switch). Both components implement the same informal contract, typed in `src/routes/audio.ts`:
+
 - Receive bound props: `playbackRate`, `paused`, `volume`, `muted`.
 - Dispatch a `ready` event (`AudioReadyDetail`: `isReady`, `audioLength`, and a `seek: SeekFunction` closure the parent stores and calls to scrub).
 - Dispatch a `currentTime` event on playback progress.
 
 `LocalAudio.svelte` wraps a native `<audio>` element bound to a file `<input>`. `YoutubeAudio.svelte` wraps the YouTube IFrame Player API: it injects the `iframe_api` script itself, waits on `window.onYouTubeIframeAPIReady` before allowing playback (tracked via an `apiReady` flag — the "Load Video" button is disabled until then), and polls `player.getCurrentTime()` on an interval since the IFrame API has no timeupdate event.
 
-**YouTube type-checking gotcha.** The YouTube IFrame API's `YT` namespace comes from `@types/youtube` as an *ambient global* (no import needed at runtime). But `tsconfig.json` restricts automatic global-type inclusion via a `"types": [...]` allowlist, so `@types/youtube` must be listed there explicitly (as `"youtube"`) or `YT` fails to typecheck even though it resolves fine at runtime.
+**YouTube type-checking gotcha.** The YouTube IFrame API's `YT` namespace comes from `@types/youtube` as an _ambient global_ (no import needed at runtime). But `tsconfig.json` restricts automatic global-type inclusion via a `"types": [...]` allowlist, so `@types/youtube` must be listed there explicitly (as `"youtube"`) or `YT` fails to typecheck even though it resolves fine at runtime.
 
-**Prerendering gotcha.** This is a fully prerendered site (`export const prerender = true` in `+layout.ts`, `adapter-static`). Svelte runs `onDestroy` callbacks during the SSR/prerender pass even though `onMount` never runs server-side. Don't reference browser-only globals (`document`, `window`) directly inside `onDestroy` — register cleanup via the function *returned from* `onMount` instead, so it only ever runs client-side.
+**Prerendering gotcha.** This is a fully prerendered site (`export const prerender = true` in `+layout.ts`, `adapter-static`). Svelte runs `onDestroy` callbacks during the SSR/prerender pass even though `onMount` never runs server-side. Don't reference browser-only globals (`document`, `window`) directly inside `onDestroy` — register cleanup via the function _returned from_ `onMount` instead, so it only ever runs client-side.
 
 **Styling.** Uses Tailwind CSS v4 via the `@tailwindcss/vite` plugin (no PostCSS, no `tailwind.config.js` — zero-config content detection). `src/app.css` just has `@import 'tailwindcss';` plus a compatibility shim for v4's `currentcolor` default border, and is imported in `+layout.svelte`. The UI is a fixed dark theme (no light-mode variant) built with utility classes directly on markup — no component library, no CSS-in-JS.
 
