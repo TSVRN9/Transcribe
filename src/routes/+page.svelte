@@ -184,7 +184,7 @@
             <summary class="cursor-pointer text-sm font-medium text-slate-300">Keyboard shortcuts</summary>
             <ul class="mt-2 space-y-1 text-sm text-slate-400">
                 {#each Object.entries(behaviorToShortcuts) as [b, key]}
-                    <li><kbd class="rounded border border-slate-600 bg-slate-700 px-1.5 py-0.5 font-mono text-xs">{key === ' ' ? 'Space' : key}</kbd> — {label(b)}</li>
+                    <li><kbd class="rounded-sm border border-slate-600 bg-slate-700 px-1.5 py-0.5 font-mono text-xs">{key === ' ' ? 'Space' : key}</kbd> — {label(b)}</li>
                 {/each}
             </ul>
         </details>

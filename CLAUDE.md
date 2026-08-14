@@ -37,6 +37,6 @@ There is no test runner configured in this project.
 
 **Prerendering gotcha.** This is a fully prerendered site (`export const prerender = true` in `+layout.ts`, `adapter-static`). Svelte runs `onDestroy` callbacks during the SSR/prerender pass even though `onMount` never runs server-side. Don't reference browser-only globals (`document`, `window`) directly inside `onDestroy` — register cleanup via the function *returned from* `onMount` instead, so it only ever runs client-side.
 
-**Styling.** Uses Tailwind CSS (v3, PostCSS pipeline: `tailwind.config.js`, `postcss.config.js`, `src/app.css` with the `@tailwind` directives, imported in `+layout.svelte`). The UI is a fixed dark theme (no light-mode variant) built with utility classes directly on markup — no component library, no CSS-in-JS.
+**Styling.** Uses Tailwind CSS v4 via the `@tailwindcss/vite` plugin (no PostCSS, no `tailwind.config.js` — zero-config content detection). `src/app.css` just has `@import 'tailwindcss';` plus a compatibility shim for v4's `currentcolor` default border, and is imported in `+layout.svelte`. The UI is a fixed dark theme (no light-mode variant) built with utility classes directly on markup — no component library, no CSS-in-JS.
 
 **Base path.** `svelte.config.js` sets `kit.paths.base = '/Transcribe'` for GitHub Pages hosting — routes and asset links must account for this prefix.
