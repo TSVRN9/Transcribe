@@ -111,24 +111,25 @@
         document.addEventListener('keyup', keyup);
         return () => document.removeEventListener('keyup', keyup);
     });
+
+    const gridBtn = 'rounded-lg bg-slate-800 py-3 text-xl transition-colors hover:enabled:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed';
+    const modeBtn = 'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default';
 </script>
 
-<header class="container">
-    <hgroup>
-        <h1>Transcribe</h1>
-        <p>A simple media player for transcription work.</p>
-    </hgroup>
+<header class="mx-auto max-w-xl px-4 pt-10 pb-6 text-center">
+    <h1 class="text-3xl font-bold">Transcribe</h1>
+    <p class="mt-1 text-slate-400">A simple media player for transcription work.</p>
 </header>
 
-<main class="container">
-    <article>
-        <div role="group">
-            <button on:click={() => setMode('local')} disabled={mode === 'local'}>🎵 Local File</button>
-            <button on:click={() => setMode('youtube')} disabled={mode === 'youtube'}>▶️ YouTube</button>
-        </div>
-    </article>
+<main class="mx-auto flex max-w-xl flex-col gap-4 px-4 pb-12">
+    <div class="flex gap-2 rounded-xl bg-slate-800/50 p-4">
+        <button class="{modeBtn} {mode === 'local' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'}"
+            on:click={() => setMode('local')} disabled={mode === 'local'}>🎵 Local File</button>
+        <button class="{modeBtn} {mode === 'youtube' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'}"
+            on:click={() => setMode('youtube')} disabled={mode === 'youtube'}>▶️ YouTube</button>
+    </div>
 
-    <article>
+    <div class="rounded-xl bg-slate-800/50 p-4">
         {#if mode === 'local'}
             <LocalAudio
                 bind:playbackRate
@@ -148,51 +149,45 @@
                 on:currentTime={e => currentTime = e.detail.currentTime }
             />
         {/if}
-    </article>
+    </div>
 
     {#if isReady}
-    <article>
-        <div class="centered">
+    <div class="flex flex-col gap-4 rounded-xl bg-slate-800/50 p-4">
+        <div class="flex justify-center gap-6 font-mono text-lg">
             <strong>⏱️ {secondsToTime(currentTime)}</strong>
-            &nbsp;&nbsp;🚩 {secondsToTime(flag)}
+            <span>🚩 {secondsToTime(flag)}</span>
         </div>
 
         <input type="range" aria-label="Seek" value={currentTime}
             on:input={e => seek(e.currentTarget.valueAsNumber)}
-            min="0" max={audiolength} step="0.1" />
+            min="0" max={audiolength} step="0.1"
+            class="w-full accent-blue-500" />
 
-        <div class="grid">
-            <button on:click={jumpBack} data-tooltip={tooltip('jumpBack')}>⏪</button>
-            <button on:click={togglePlayback} data-tooltip={tooltip('togglePlayback')}>{paused ? '▶️' : '⏸'}</button>
-            <button on:click={jumpForward} data-tooltip={tooltip('jumpForward')}>⏩</button>
+        <div class="grid grid-cols-3 gap-2">
+            <button class={gridBtn} on:click={jumpBack} title={tooltip('jumpBack')}>⏪</button>
+            <button class={gridBtn} on:click={togglePlayback} title={tooltip('togglePlayback')}>{paused ? '▶️' : '⏸'}</button>
+            <button class={gridBtn} on:click={jumpForward} title={tooltip('jumpForward')}>⏩</button>
         </div>
-        <div class="grid">
-            <button on:click={rewind} data-tooltip={tooltip('rewind')}>⏮</button>
-            <button on:click={pushFlagBack} data-tooltip={tooltip('pushFlagBack')}>◀️</button>
-            <button on:click={placeFlag} data-tooltip={tooltip('placeFlag')}>🚩</button>
-            <button on:click={resetFlag} data-tooltip={tooltip('resetFlag')}>❌</button>
+        <div class="grid grid-cols-4 gap-2">
+            <button class={gridBtn} on:click={rewind} title={tooltip('rewind')}>⏮</button>
+            <button class={gridBtn} on:click={pushFlagBack} title={tooltip('pushFlagBack')}>◀️</button>
+            <button class={gridBtn} on:click={placeFlag} title={tooltip('placeFlag')}>🚩</button>
+            <button class={gridBtn} on:click={resetFlag} title={tooltip('resetFlag')}>❌</button>
         </div>
-        <div class="grid">
-            <button on:click={slowDown} data-tooltip={tooltip('slowDown')}>🐢</button>
-            <button disabled>{Math.round(playbackRate * 100)}%</button>
-            <button on:click={speedUp} data-tooltip={tooltip('speedUp')}>🐇</button>
+        <div class="grid grid-cols-3 gap-2">
+            <button class={gridBtn} on:click={slowDown} title={tooltip('slowDown')}>🐢</button>
+            <button class="{gridBtn} font-mono text-sm" disabled>{Math.round(playbackRate * 100)}%</button>
+            <button class={gridBtn} on:click={speedUp} title={tooltip('speedUp')}>🐇</button>
         </div>
 
-        <details>
-            <summary>Keyboard shortcuts</summary>
-            <ul>
+        <details class="rounded-lg bg-slate-900/50 px-3 py-2">
+            <summary class="cursor-pointer text-sm font-medium text-slate-300">Keyboard shortcuts</summary>
+            <ul class="mt-2 space-y-1 text-sm text-slate-400">
                 {#each Object.entries(behaviorToShortcuts) as [b, key]}
-                    <li><kbd>{key === ' ' ? 'Space' : key}</kbd> — {label(b)}</li>
+                    <li><kbd class="rounded border border-slate-600 bg-slate-700 px-1.5 py-0.5 font-mono text-xs">{key === ' ' ? 'Space' : key}</kbd> — {label(b)}</li>
                 {/each}
             </ul>
         </details>
-    </article>
+    </div>
     {/if}
 </main>
-
-<style>
-    .centered {
-        text-align: center;
-        width: 100%;
-    }
-</style>

@@ -23,23 +23,21 @@
 </script>
 
 <!-- Input -->
-<div class="grid">
-    <div />
-    <input type="file" accept=".mp3, .ogg, .wav" bind:files>
-    <div />
+<div class="flex justify-center">
+    <input type="file" accept=".mp3, .ogg, .wav" bind:files
+        class="text-sm text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-slate-100 file:hover:bg-slate-600">
 </div>
 <!-- Source -->
 {#if audioFile}
-<div class="grid">
-    <div />            
-    <audio controls src={URL.createObjectURL(audioFile)} 
+<div class="mt-3 flex justify-center">
+    <audio controls src={URL.createObjectURL(audioFile)}
         bind:playbackRate
         bind:currentTime={time}
         bind:paused
         bind:volume
         bind:muted
         bind:duration
+        class="w-full"
     />
-    <div />
 </div>
 {/if}
