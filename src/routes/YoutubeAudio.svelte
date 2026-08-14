@@ -1,7 +1,5 @@
 <script lang="ts">
-	import { onMount, afterUpdate, createEventDispatcher, onDestroy, tick } from 'svelte';
-	// @ts-ignore
-    import type YT from 'youtube';
+	import { onMount, afterUpdate, createEventDispatcher, onDestroy } from 'svelte';
 	import { placeholderSeek, type AudioReady, type AudioCurrentTime } from './audio';
 
 	export let playbackRate: number;
@@ -11,8 +9,9 @@
 
     const readyDispatch = createEventDispatcher<AudioReady>();
     const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
-	
-	let tag: HTMLScriptElement;
+
+	let tag: HTMLScriptElement | undefined;
+	let apiReady = false;
 
 	let videoLink = '';
 	$: videoId = (() => {
@@ -29,11 +28,16 @@
 	})();
 	let player: YT.Player | undefined;
 	let error = '';
-	let intervalId: number;
+	let intervalId: ReturnType<typeof setInterval>;
 
 	const loadVideo = () => {
-		console.log(videoId);
-		if (!videoId) {
+		error = '';
+		if (!videoId || !apiReady) {
+			return;
+		}
+
+		if (player) {
+			player.loadVideoById(videoId);
 			return;
 		}
 
@@ -58,7 +62,7 @@
 						isReady: true,
 						audioLength: youtubePlayer.getDuration(),
 						seek: (time: number) => {
-							player.seekTo(time);
+							player?.seekTo(time, true);
 						}
 					});
 				},
@@ -72,37 +76,44 @@
 					});
 				},
 				onStateChange: (event: any) => {
-					paused = event.data == YT.PlayerState.PAUSED;
+					if (event.data === YT.PlayerState.PLAYING) {
+						paused = false;
+					} else if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.ENDED) {
+						paused = true;
+					}
 				}
 			}
 		});
 	};
 
 	onMount(() => {
-		tag = document.createElement('script');
-		tag.src = 'https://www.youtube.com/iframe_api';
-
-		const head = document.head || document.getElementsByTagName('head')[0];
-		head.appendChild(tag);
+		if (typeof YT !== 'undefined' && YT.Player) {
+			apiReady = true;
+		} else {
+			(window as any).onYouTubeIframeAPIReady = () => { apiReady = true; };
+			if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+				tag = document.createElement('script');
+				tag.src = 'https://www.youtube.com/iframe_api';
+				document.head.appendChild(tag);
+			}
+		}
 
 		intervalId = setInterval(() => {
 			if (player)
 				currentTimeDispatch('currentTime', {
-					currentTime: player.getCurrentTime() 
+					currentTime: player.getCurrentTime()
 				})
 		}, 50);
 	});
 
 	onDestroy(() => {
-		const head = document.head || document.getElementsByTagName('head')[0];
-		head.removeChild(tag);
-
+		player?.destroy();
+		tag?.remove();
 		clearInterval(intervalId);
 	})
 
-	afterUpdate(async () => {
+	afterUpdate(() => {
  		if (player) {
-			await tick();
 			if (player.getPlaybackRate() != playbackRate) {
 				player.setPlaybackRate(playbackRate);
 			}
@@ -119,15 +130,14 @@
 			};
 		}
 	});
-
-	$: {
-		error = '';
-	}
 </script>
 
-<div>
-	<input type="text" bind:value={videoLink} placeholder="Paste YouTube link" />
-	<button on:click={loadVideo}>Load Video</button>
+<div class="grid">
+	<input type="text" bind:value={videoLink} placeholder="Paste YouTube link"
+		on:keydown={(e) => e.key === 'Enter' && loadVideo()} />
+	<button on:click={loadVideo} disabled={!apiReady} aria-busy={!apiReady}>
+		{apiReady ? 'Load Video' : 'Loading player…'}
+	</button>
 </div>
 
 <div id="youtube-player" />

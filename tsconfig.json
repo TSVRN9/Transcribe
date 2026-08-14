@@ -10,7 +10,8 @@
 		"sourceMap": true,
 		"strict": true,
 		"types": [
-		  "vite-plugin-pwa/info"
+		  "vite-plugin-pwa/info",
+		  "youtube"
 		]
 	}
 }

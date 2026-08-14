@@ -1,5 +1,6 @@
 <script>
-  import { pwaInfo } from 'virtual:pwa-info'; 
+  import '@picocss/pico/css/pico.min.css';
+  import { pwaInfo } from 'virtual:pwa-info';
 
   $: webManifestLink = pwaInfo ? pwaInfo.webManifest.linkTag : '' 
 </script> 

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher, tick } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 	import type { AudioCurrentTime, AudioReady } from './audio';
     const readyDispatch = createEventDispatcher<AudioReady>();
     const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
@@ -9,28 +9,17 @@
     $: readyDispatch('ready', {
         isReady: !!audioFile,
         audioLength: audioFile ? duration : 0,
-        seek: (time: number) => {
-            setTime(time);
-        },
+        seek: (t: number) => { time = t; },
     });
+    $: currentTimeDispatch('currentTime', { currentTime: time });
 
-    let currentTime: number = 0;
     let time: number = 0;
     let duration: number = 0;
-    
-    export let playbackRate: number = 1, 
-        paused: boolean = true, 
-        volume: number = 1, 
-        muted: boolean = false; 
-    
-    async function setTime(n: number) {
-        await tick();
-        time = n;
-        currentTimeDispatch('currentTime', { currentTime });
-    }
 
-    $: setTime(currentTime);
-    $: currentTime = time;
+    export let playbackRate: number = 1,
+        paused: boolean = true,
+        volume: number = 1,
+        muted: boolean = false;
 </script>
 
 <!-- Input -->
