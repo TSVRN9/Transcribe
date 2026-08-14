@@ -38,6 +38,6 @@
         bind:muted
         bind:duration
         class="w-full"
-    />
+    ></audio>
 </div>
 {/if}

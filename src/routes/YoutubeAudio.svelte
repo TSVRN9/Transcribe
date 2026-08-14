@@ -142,7 +142,7 @@
 	</button>
 </div>
 
-<div id="youtube-player" />
+<div id="youtube-player"></div>
 
 {#if error}
 	<div class="mt-2 text-sm text-red-400">{error}</div>
