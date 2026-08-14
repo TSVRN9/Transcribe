@@ -13,7 +13,6 @@
 		"deploy": "gh-pages -d build -t"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-auto": "^2.1.0",
 		"@sveltejs/adapter-static": "^2.0.2",
 		"@sveltejs/kit": "^1.20.5",
 		"@types/youtube": "^0.0.47",
@@ -34,8 +33,7 @@
 		"tslib": "^2.6.0",
 		"typescript": "^5.1.5",
 		"vite": "^4.3.9",
-		"vite-plugin-pwa": "^0.16.4",
-		"workbox-cli": "^7.0.0"
+		"vite-plugin-pwa": "^0.16.4"
 	},
 	"type": "module"
 }
