@@ -1,53 +1,67 @@
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" >
+<!doctype html>
+<html lang="en">
 	<head>
-		<meta name="viewport" content="width=device-width,initial-scale=1">
-		<meta name="description" content="Transcribe audio easier!">
-		<meta name="theme-color" content="#000000">
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<meta name="description" content="Transcribe audio easier!" />
+		<meta name="theme-color" content="#000000" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta charset="utf-8" />
 		<title>Transcribe</title>
-		<link rel="apple-touch-icon" href="./apple-touch-icon.png" sizes="180x180">
-		<link rel="mask-icon" href="./pwa-512x512.png" color="#000000">
+		<link rel="apple-touch-icon" href="./apple-touch-icon.png" sizes="180x180" />
+		<link rel="mask-icon" href="./pwa-512x512.png" color="#000000" />
 		<link rel="icon" href="./favicon.png" />
-		<link rel="stylesheet" href="https://unpkg.com/@picocss/pico@latest/css/pico.min.css">
-		<meta name="viewport" content="width=device-width" />
-		
-		<link href="./_app/immutable/assets/2.d75f51ba.css" rel="stylesheet">
-		<link rel="modulepreload" href="./_app/immutable/entry/start.93f8b24a.js">
-		<link rel="modulepreload" href="./_app/immutable/chunks/scheduler.782c3151.js">
-		<link rel="modulepreload" href="./_app/immutable/chunks/singletons.2eff46cd.js">
-		<link rel="modulepreload" href="./_app/immutable/entry/app.d70a5a00.js">
-		<link rel="modulepreload" href="./_app/immutable/chunks/index.549c4d75.js">
-		<link rel="modulepreload" href="./_app/immutable/nodes/0.a4dfe343.js">
-		<link rel="modulepreload" href="./_app/immutable/nodes/2.a8305c80.js"><!-- HEAD_svelte-9j5arz_START --><!-- HTML_TAG_START --><link rel="manifest" href="/Transcribe/manifest.webmanifest"><!-- HTML_TAG_END --><!-- HEAD_svelte-9j5arz_END -->
+		<link href="./_app/immutable/entry/start.I9F2XMza.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/BQtVm9ak.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/33vW8bm5.js" rel="modulepreload">
+		<link href="./_app/immutable/entry/app.PKBWKenG.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/HclGiUj8.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/xihTtKlq.js" rel="modulepreload">
+		<link href="./_app/immutable/nodes/0.BY-eZe0D.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/DQO5ZJG6.js" rel="modulepreload">
+		<link href="./_app/immutable/nodes/2.QDFtp1CA.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/ASuHtvqb.js" rel="modulepreload">
+		<!--12qhfyh--><!----><link rel="manifest" href="/Transcribe/manifest.webmanifest"><!----><!---->
+		<link href="./_app/immutable/assets/0.DgaI3e_-.css" rel="stylesheet">
 	</head>
-	<body data-sveltekit-preload-data="hover">
+	<body
+		data-sveltekit-preload-data="hover"
+		class="bg-slate-900 text-slate-100 min-h-screen antialiased"
+	>
 		<main>
-			<div style="display: contents">   <article class="container"><button data-svelte-h="svelte-svyboe">Change Source</button></article> <article class="container"> <div class="grid"><div></div> <input type="file" accept=".mp3, .ogg, .wav"> <div></div></div>  </article> <div> </div> 
+			<div style="display: contents"><!--[--><!--[0--><!--[--><!--[--><!--[--><header class="mx-auto max-w-xl px-4 pt-10 pb-6 text-center"><h1 class="text-3xl font-bold">Transcribe</h1> <p class="mt-1 text-slate-400">A simple media player for transcription work.</p></header> <main class="mx-auto flex max-w-xl flex-col gap-4 px-4 pb-12 "><div class="flex flex-col gap-4 "><div class="flex flex-col gap-4 "><div class="flex flex-col gap-4 "><div class="flex gap-2 rounded-xl bg-slate-800/50 p-4"><button class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default bg-blue-600" disabled="">🎵 Local File</button> <button class="flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default bg-slate-700 hover:bg-slate-600">▶️ YouTube</button></div> <div class="rounded-xl bg-slate-800/50 p-4"><!--[0--><div class="flex justify-center"><input type="file" accept=".mp3, .ogg, .wav" class="text-sm text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-slate-100 file:hover:bg-slate-600"/></div> <!--[-1--><!--]--><!--]--></div> <!--[-1--><!--]--></div> <!--[-1--><!--]--></div> <!--[-1--><!--]--></div></main><!--]--><!--]--><!--]--><!--]--> <!--[-1--><!--]--><!--]-->
 			
 			<script>
 				{
-					__sveltekit_1c12hhu = {
-						assets: "/Transcribe",
+					__sveltekit_1fy5nb0 = {
 						base: new URL(".", location).pathname.slice(0, -1),
-						env: {}
+						assets: "/Transcribe"
 					};
 
 					const element = document.currentScript.parentElement;
 
-					const data = [null,null];
-
 					Promise.all([
-						import("./_app/immutable/entry/start.93f8b24a.js"),
-						import("./_app/immutable/entry/app.d70a5a00.js")
+						import("./_app/immutable/entry/start.I9F2XMza.js"),
+						import("./_app/immutable/entry/app.PKBWKenG.js")
 					]).then(([kit, app]) => {
 						kit.start(app, element, {
 							node_ids: [0, 2],
-							data,
+							data: [null,null],
 							form: null,
 							error: null
 						});
 					});
+
+					if ('serviceWorker' in navigator) {
+						const script_url = './service-worker.js';
+						const policy = globalThis?.window?.trustedTypes?.createPolicy(
+							'sveltekit-trusted-url',
+							{ createScriptURL(url) { return url; } }
+						);
+						const sanitised = policy?.createScriptURL(script_url) ?? script_url;
+						addEventListener('load', function () {
+							navigator.serviceWorker.register(sanitised);
+						});
+					}
 				}
 			</script>
 		</div>
