@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { base } from '$app/paths';
-	import type { AudioCurrentTime, AudioReady, PitchEvent, PitchAnalyzer } from './audio';
+	import type {
+		AudioCurrentTime,
+		AudioReady,
+		PitchEvent,
+		PitchEventDetail,
+		PitchAnalyzer
+	} from './audio';
 	import { computeBasicPitch, computePitchgram, extractLines, mixToMono } from './pitchgram';
 	import { sharedFile } from './shareTarget';
 
@@ -25,10 +32,24 @@
 		}
 	});
 	$: currentTimeDispatch('currentTime', { currentTime: time });
-	$: if (audioFile !== pitchFile || analyzer !== pitchAnalyzerUsed) resetPitch();
-	// analyze is set true once the caller opens the pitchgram view; compute lazily, once per
-	// file+analyzer combination
-	$: if (analyze && audioFile && pitchStatus === 'idle') computePitch(audioFile, analyzer);
+	// a new file invalidates every cached analyzer result; switching analyzer on the same file
+	// doesn't — see pitchCache below
+	$: if (audioFile !== pitchFile) {
+		pitchFile = audioFile;
+		pitchCache.clear();
+		pitchStatus = 'idle';
+	}
+	// analyze is set true once the caller opens the pitchgram view. Re-runs whenever analyzer
+	// changes too (it's referenced below), so switching Neural <-> FFT lands here: a cached
+	// result replays instantly, otherwise a fresh computation starts. pitchStatus === 'computing'
+	// gates against starting a second computation while one's already in flight — switching
+	// analyzer mid-computation just queues the new one for when the current one finishes,
+	// rather than fighting it for the main thread.
+	$: if (analyze && audioFile && pitchStatus !== 'computing') {
+		const cached = pitchCache.get(analyzer);
+		if (cached) pitchDispatch('pitch', cached);
+		else computePitch(audioFile, analyzer);
+	}
 
 	let time: number = 0;
 	let duration: number = 0;
@@ -41,26 +62,26 @@
 		analyzer: PitchAnalyzer = 'neural';
 
 	let pitchFile: File | undefined;
-	let pitchAnalyzerUsed: PitchAnalyzer | undefined;
-	let pitchStatus: 'idle' | 'computing' | 'error' | 'done' = 'idle';
-
-	function resetPitch() {
-		pitchFile = audioFile;
-		pitchAnalyzerUsed = analyzer;
-		pitchStatus = 'idle';
-		pitchDispatch('pitch', { status: 'idle' });
-	}
+	let pitchStatus: 'idle' | 'computing' = 'idle';
+	// keyed by analyzer, cleared only when the file itself changes — switching between Neural
+	// and FFT (or back to a view already open before) replays the cached result instead of
+	// re-running the model/FFT from scratch
+	const pitchCache = new SvelteMap<
+		PitchAnalyzer,
+		PitchEventDetail & { status: 'done' | 'error' }
+	>();
 
 	async function computePitch(file: File, chosenAnalyzer: PitchAnalyzer) {
 		pitchStatus = 'computing';
-		pitchDispatch('pitch', { status: 'computing' });
+		if (file === audioFile && chosenAnalyzer === analyzer)
+			pitchDispatch('pitch', { status: 'computing' });
 		try {
 			const arrayBuffer = await file.arrayBuffer();
 			// basic-pitch requires mono audio at exactly 22050Hz; the FFT path doesn't strictly
 			// need it, but decoding once at a fixed rate keeps both analyzers on the same footing
 			const ctx = new OfflineAudioContext(1, 1, 22050);
 			const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-			if (file !== audioFile) return; // file was swapped mid-decode
+			if (file !== audioFile) return; // file was swapped mid-decode — cache would be stale, drop it
 
 			const samples = mixToMono(audioBuffer);
 			const { result, lines, raw } =
@@ -73,19 +94,23 @@
 								raw: undefined
 							};
 						})()
-					: await computeBasicPitch(samples, `${base}/basic-pitch-model/model.json`);
-			if (file !== audioFile || chosenAnalyzer !== analyzer) return;
+					: await computeBasicPitch(samples, `${base}/basic-pitch-model/model.json`, duration);
+			if (file !== audioFile) return;
 
-			pitchStatus = 'done';
-			pitchDispatch('pitch', {
+			const entry: PitchEventDetail & { status: 'done' } = {
 				status: 'done',
 				result,
 				lines,
 				raw: raw ?? { frames: [], onsets: [] }
-			});
+			};
+			pitchCache.set(chosenAnalyzer, entry);
+			pitchStatus = 'idle';
+			if (chosenAnalyzer === analyzer) pitchDispatch('pitch', entry);
 		} catch {
-			pitchStatus = 'error';
-			pitchDispatch('pitch', { status: 'error' });
+			if (file === audioFile) pitchCache.set(chosenAnalyzer, { status: 'error' });
+			pitchStatus = 'idle';
+			if (file === audioFile && chosenAnalyzer === analyzer)
+				pitchDispatch('pitch', { status: 'error' });
 		}
 	}
 </script>
@@ -96,7 +121,7 @@
 		type="file"
 		accept=".mp3, .ogg, .wav"
 		on:change={(e) => (audioFile = e.currentTarget.files?.[0])}
-		class="text-sm text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-slate-100 file:hover:bg-slate-600"
+		class="text-sm text-stone-400 file:mr-3 file:rounded-md file:border-0 file:bg-amber-600 file:px-3 file:py-2 file:text-stone-100 file:hover:bg-amber-500"
 	/>
 </div>
 <!-- Source -->

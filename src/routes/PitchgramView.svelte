@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fade, fly } from 'svelte/transition';
 	import type { LinePoint, PitchLines, RenderedNote } from './pitchgram';
 	import {
 		OCTAVE_START,
@@ -12,7 +13,9 @@
 	} from './pitchgram';
 	import type { PitchStatus, PitchAnalyzer } from './audio';
 	import { placeholderSeek, type SeekFunction } from './audio';
-	import { secondsToTime } from './utils';
+	import { secondsToTime, gridBtn, primaryBtn, iconSize } from './utils';
+	import Icon from './Icon.svelte';
+	import PianoReference from './PianoReference.svelte';
 
 	export let status: PitchStatus = 'idle';
 	export let frames: Float32Array[] | undefined = undefined;
@@ -30,7 +33,24 @@
 	export let togglePlayback: VoidFunction;
 	export let jumpBack: VoidFunction;
 	export let jumpForward: VoidFunction;
+	export let speedUp: VoidFunction;
+	export let slowDown: VoidFunction;
+	export let resetSpeed: VoidFunction;
+	export let placeFlag: VoidFunction;
+	export let pushFlagBack: VoidFunction;
+	export let resetFlag: VoidFunction;
+	export let rewind: VoidFunction;
 	export let onClose: VoidFunction;
+
+	// mobile "screens": pitchgram takes the whole viewport on a phone (see the fixed-inset
+	// wrapper in +page.svelte), so speed/flag controls and the piano — all reachable from the
+	// sidebar on desktop — have nowhere to live. Instead of cramming them permanently into the
+	// pitchgram's own vertical budget, they live in a sheet that slides up on demand and slides
+	// back down out of the way, keeping the canvas full-height the rest of the time.
+	let mobileSheet: 'none' | 'controls' | 'piano' = 'none';
+	function toggleSheet(which: 'controls' | 'piano') {
+		mobileSheet = mobileSheet === which ? 'none' : which;
+	}
 
 	const TOTAL_BINS = OCTAVE_COUNT * BINS_PER_OCTAVE;
 	const SEMITONE_BINS = BINS_PER_OCTAVE / 12;
@@ -156,18 +176,18 @@
 
 	const VIEW_MODE_INFO: Record<ViewMode, string> = {
 		heatmap:
-			'Raw pitch-salience map — brightness is how strongly each pitch is present, before any note-picking.',
+			"Everything that's happening, pitch-wise — the brighter a spot, the more that pitch is present. Nothing's picked out yet, so it can look busy.",
 		combined:
-			'Heatmap plus three tracked lines: the single strongest confident pitch per frame in each register.',
+			"Adds three lines on top of the heatmap, each tracking whatever's strongest right now in the melody, inner-voice, and bass ranges — a quick way to follow the main line without reading the whole heatmap.",
 		notes:
-			"Discrete note blocks from basic-pitch's own onset + energy-tolerance segmentation, not a per-frame pick.",
+			'Turns the heatmap into distinct note blocks, the way the model would actually transcribe it, instead of a continuous smear of pitch.',
 		voices:
-			"Basic-pitch's notes grouped into up to 4 continuous voice streams by pitch proximity + monophony, not a fixed frequency band — closer to following separate melodic lines by ear."
+			'Groups those notes into up to four separate melodic lines, so you can follow one voice at a time instead of untangling them yourself.'
 	};
 	const ANALYZER_INFO: Record<PitchAnalyzer, string> = {
 		neural:
-			"Spotify's basic-pitch neural model — trained to recognize actual note pitches, more accurate on real instruments.",
-		fft: 'Hand-rolled FFT + harmonic-summation salience — raw spectral energy, no learned note model. No Notes mode.'
+			'A neural model trained specifically to recognize real note pitches — the more accurate choice for actual instruments and voices.',
+		fft: "A straightforward frequency analysis with no learned model behind it — faster, but it reads raw spectral energy rather than real notes, so there's no Notes or Voices view for this one."
 	};
 
 	let showMelody = true;
@@ -234,15 +254,23 @@
 		voicesComputing = false;
 	}
 
-	// horizontal (time) zoom: px per frame column, auto-fit to the container once on load
-	const MIN_SCALE = 0.3;
+	// horizontal (time) zoom: px per frame column, auto-fit to the container once on load.
+	// minScale is a *floor*, not a fixed constant: the scale at which the canvas exactly
+	// fills the container width. Zooming out can never go below it, so the pitchgram can
+	// never shrink to less than the viewport — same reasoning as minScaleY below.
+	const FALLBACK_MIN_SCALE = 0.3; // used only before containerWidth is measured
 	const MAX_SCALE = 20;
 	let scale = 2;
 	let fitted = false;
 	let containerWidth = 0;
-	$: if (frames && containerWidth && !fitted) {
-		scale = Math.max(MIN_SCALE, containerWidth / frames.length);
-		fitted = true;
+	$: minScale = frames && containerWidth ? containerWidth / frames.length : FALLBACK_MIN_SCALE;
+	$: if (frames && containerWidth) {
+		if (!fitted) {
+			scale = minScale;
+			fitted = true;
+		} else if (scale < minScale) {
+			scale = minScale; // container grew (e.g. rotation) past the old floor
+		}
 	}
 	$: if (!frames) fitted = false;
 
@@ -251,13 +279,16 @@
 	// clips only use 2-3 octaves of it, so fitting the whole grid leaves everything a sliver
 	// with no room for semitone labels. Mirrors the x-fit pattern below, but also has to set
 	// scrollTop once, since "fit" here means "scroll to the right rows", not just "size them".
-	const MIN_SCALE_Y = 0.4;
+	const FALLBACK_MIN_SCALE_Y = 0.4; // used only before containerHeight is measured
 	const MAX_SCALE_Y = 20;
 	const OCCUPIED_THRESHOLD = 0.2; // normalized salience — same order as LINE_THRESHOLD
 	const OCCUPIED_PAD_SEMITONES = 3;
 	let scaleY = 3;
 	let fittedY = false;
 	let containerHeight = 0;
+	// same floor reasoning as minScale: never let vertical zoom shrink the grid below the
+	// container's own height
+	$: minScaleY = containerHeight ? containerHeight / TOTAL_BINS : FALLBACK_MIN_SCALE_Y;
 
 	function fitVerticalZoom(frames: Float32Array[]) {
 		let minBin = TOTAL_BINS;
@@ -274,23 +305,27 @@
 		const pad = OCCUPIED_PAD_SEMITONES * SEMITONE_BINS;
 		minBin = Math.max(0, minBin - pad);
 		maxBin = Math.min(TOTAL_BINS - 1, maxBin + pad);
-		scaleY = Math.min(MAX_SCALE_Y, Math.max(MIN_SCALE_Y, containerHeight / (maxBin - minBin + 1)));
+		scaleY = Math.max(minScaleY, Math.min(MAX_SCALE_Y, containerHeight / (maxBin - minBin + 1)));
 		const topRow = TOTAL_BINS - 1 - maxBin;
 		requestAnimationFrame(() => {
 			if (scrollEl) scrollEl.scrollTop = topRow * scaleY;
 		});
 	}
-	$: if (frames && containerHeight && !fittedY) {
-		fitVerticalZoom(frames);
-		fittedY = true;
+	$: if (frames && containerHeight) {
+		if (!fittedY) {
+			fitVerticalZoom(frames);
+			fittedY = true;
+		} else if (scaleY < minScaleY) {
+			scaleY = minScaleY;
+		}
 	}
 	$: if (!frames) fittedY = false;
 
 	function zoomBy(factor: number) {
-		scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+		scale = Math.max(minScale, Math.min(MAX_SCALE, scale * factor));
 	}
 	function zoomYBy(factor: number) {
-		scaleY = Math.min(MAX_SCALE_Y, Math.max(MIN_SCALE_Y, scaleY * factor));
+		scaleY = Math.max(minScaleY, Math.min(MAX_SCALE_Y, scaleY * factor));
 	}
 
 	let scrollEl: HTMLDivElement;
@@ -422,25 +457,25 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
-	<div class="flex items-center justify-between gap-3 pb-2 text-xs text-slate-300">
-		<div class="flex items-center gap-3">
+	<div class="flex flex-wrap items-center justify-between gap-2 pb-2 text-xs text-stone-300">
+		<div class="flex items-center gap-2">
 			<label class="flex items-center gap-1">
-				<span class="text-slate-500">Analyzer</span>
+				<span class="hidden text-stone-500 sm:inline">Analyzer</span>
 				<select
 					bind:value={analyzer}
 					title={ANALYZER_INFO[analyzer]}
-					class="rounded-sm border border-slate-600 bg-slate-800 px-1 py-1"
+					class="min-h-9 rounded-sm border border-stone-600 bg-stone-800 px-1.5 py-1.5"
 				>
 					<option value="neural">Neural</option>
 					<option value="fft">FFT</option>
 				</select>
 			</label>
 			<label class="flex items-center gap-1">
-				<span class="text-slate-500">View</span>
+				<span class="hidden text-stone-500 sm:inline">View</span>
 				<select
 					bind:value={viewMode}
 					title={VIEW_MODE_INFO[viewMode]}
-					class="rounded-sm border border-slate-600 bg-slate-800 px-1 py-1"
+					class="min-h-9 rounded-sm border border-stone-600 bg-stone-800 px-1.5 py-1.5"
 				>
 					<option value="heatmap">Heatmap</option>
 					<option value="combined">Combined</option>
@@ -449,39 +484,50 @@
 				</select>
 			</label>
 		</div>
-		<div class="flex items-center gap-2">
-			<span class="text-slate-500">time</span>
+		<div class="flex items-center gap-1.5">
+			<span class="hidden text-stone-500 sm:inline">time</span>
 			<button
-				class="w-7 rounded-sm border border-slate-600 hover:bg-slate-700"
+				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
 				on:click={() => zoomBy(1 / 1.5)}
 				aria-label="Zoom time out">−</button
 			>
 			<button
-				class="w-7 rounded-sm border border-slate-600 hover:bg-slate-700"
+				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
 				on:click={() => zoomBy(1.5)}
 				aria-label="Zoom time in">+</button
 			>
-			<span class="text-slate-500">pitch</span>
+			<span class="hidden text-stone-500 sm:inline">pitch</span>
 			<button
-				class="w-7 rounded-sm border border-slate-600 hover:bg-slate-700"
+				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
 				on:click={() => zoomYBy(1 / 1.5)}
 				aria-label="Zoom pitch out">−</button
 			>
 			<button
-				class="w-7 rounded-sm border border-slate-600 hover:bg-slate-700"
+				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
 				on:click={() => zoomYBy(1.5)}
 				aria-label="Zoom pitch in">+</button
 			>
 			<button
-				class="ml-2 rounded-sm border border-slate-600 px-2 py-1 hover:bg-slate-700"
-				on:click={onClose}>✕ Close</button
+				class="ml-1 flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
+				on:click={() => {
+					followEnabled = true;
+					followPlayhead(currentTime);
+				}}
+				title="Jump to playhead"
+				aria-label="Jump to playhead"><Icon name="viewfinder-circle" class="h-4 w-4" /></button
+			>
+			<button
+				class="ml-1 flex h-9 items-center justify-center gap-1 rounded-sm border border-stone-600 px-2.5 hover:bg-stone-700"
+				on:click={onClose}
+				aria-label="Close pitchgram"
+				><Icon name="x-mark" class="h-4 w-4" /> <span class="hidden sm:inline">Close</span></button
 			>
 		</div>
 	</div>
 
 	{#if showLines}
 		<div
-			class="mb-2 flex flex-wrap items-center gap-3 rounded-sm border border-slate-700 bg-slate-900/40 px-2 py-1.5 text-xs text-slate-300"
+			class="mb-2 flex flex-wrap items-center gap-3 rounded-sm border border-stone-700 bg-stone-900/40 px-2 py-1.5 text-xs text-stone-300"
 		>
 			<label
 				class="flex items-center gap-1"
@@ -500,30 +546,32 @@
 				><input type="checkbox" bind:checked={showBass} /><span class="text-cyan-400">●</span> Bass</label
 			>
 			<label class="flex items-center gap-1" title="Hide notes the model isn't confident about">
-				<span class="text-slate-500">Confidence</span>
+				<span class="text-stone-500">Confidence</span>
 				<input
 					type="range"
 					min={LINE_THRESHOLD}
 					max="1"
 					step="0.05"
 					bind:value={confidenceThreshold}
-					class="w-16 accent-blue-500"
+					class="w-16 accent-amber-500"
 				/>
-				<span class="w-9 font-mono text-slate-400">{Math.round(confidenceThreshold * 100)}%</span>
+				<span class="w-9 font-mono text-stone-400">{Math.round(confidenceThreshold * 100)}%</span>
 			</label>
 		</div>
 	{/if}
 
-	<p class="mb-2 text-[11px] text-slate-500">
+	<p class="mb-2 hidden text-[11px] text-stone-500 lg:block">
 		{ANALYZER_INFO[analyzer]} · {VIEW_MODE_INFO[viewMode]}
 	</p>
 
 	{#if viewMode === 'notes' || viewMode === 'voices'}
-		<details class="mb-2 rounded-sm border border-slate-700 bg-slate-900/50 px-3 py-2 text-xs">
-			<summary class="cursor-pointer font-medium text-slate-300">⚙ Advanced note settings</summary>
-			<div class="mt-2 flex flex-wrap items-center gap-4 text-slate-300">
+		<details class="mb-2 rounded-sm border border-stone-700 bg-stone-900/50 px-3 py-2 text-xs">
+			<summary class="flex cursor-pointer items-center gap-1.5 font-medium text-stone-300">
+				<Icon name="adjustments-horizontal" class="h-4 w-4" /> Advanced note settings</summary
+			>
+			<div class="mt-2 flex flex-wrap items-center gap-4 text-stone-300">
 				<label class="flex items-center gap-1" title="Minimum onset activation to start a note">
-					<span class="text-slate-500">Onset</span>
+					<span class="text-stone-500">Onset</span>
 					<input
 						type="range"
 						min="0.1"
@@ -531,12 +579,12 @@
 						step="0.05"
 						value={onsetThresh}
 						on:change={(e) => (onsetThresh = e.currentTarget.valueAsNumber)}
-						class="w-20 accent-blue-500"
+						class="w-20 accent-amber-500"
 					/>
-					<span class="w-9 font-mono text-slate-400">{Math.round(onsetThresh * 100)}%</span>
+					<span class="w-9 font-mono text-stone-400">{Math.round(onsetThresh * 100)}%</span>
 				</label>
 				<label class="flex items-center gap-1" title="Minimum activation for a note to stay 'on'">
-					<span class="text-slate-500">Frame</span>
+					<span class="text-stone-500">Frame</span>
 					<input
 						type="range"
 						min="0.1"
@@ -544,12 +592,12 @@
 						step="0.05"
 						value={frameThresh}
 						on:change={(e) => (frameThresh = e.currentTarget.valueAsNumber)}
-						class="w-20 accent-blue-500"
+						class="w-20 accent-amber-500"
 					/>
-					<span class="w-9 font-mono text-slate-400">{Math.round(frameThresh * 100)}%</span>
+					<span class="w-9 font-mono text-stone-400">{Math.round(frameThresh * 100)}%</span>
 				</label>
 				<label class="flex items-center gap-1" title="Minimum note length, in ~86fps model frames">
-					<span class="text-slate-500">Min length</span>
+					<span class="text-stone-500">Min length</span>
 					<input
 						type="range"
 						min="1"
@@ -557,9 +605,9 @@
 						step="1"
 						value={minNoteLen}
 						on:change={(e) => (minNoteLen = e.currentTarget.valueAsNumber)}
-						class="w-20 accent-blue-500"
+						class="w-20 accent-amber-500"
 					/>
-					<span class="w-9 font-mono text-slate-400">{minNoteLen}f</span>
+					<span class="w-9 font-mono text-stone-400">{minNoteLen}f</span>
 				</label>
 				<label
 					class="flex items-center gap-1"
@@ -574,23 +622,28 @@
 					<input type="checkbox" bind:checked={melodiaTrick} /> Melodia trick (slow)
 				</label>
 				{#if notesComputing || voicesComputing}
-					<span class="text-slate-500">Computing notes…</span>
+					<span class="text-stone-500">Computing notes…</span>
 				{/if}
 			</div>
 		</details>
 	{/if}
 
 	{#if status === 'computing'}
-		<p class="flex flex-1 items-center justify-center text-sm text-slate-400">
-			Analyzing pitch content…
-		</p>
+		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-stone-400">
+			<div
+				class="h-8 w-8 animate-spin rounded-full border-2 border-stone-700 border-t-amber-400"
+				role="status"
+				aria-label="Analyzing pitch content"
+			></div>
+			<p>Analyzing pitch content…</p>
+		</div>
 	{:else if status === 'error'}
 		<p class="flex flex-1 items-center justify-center text-sm text-red-400">
 			Couldn't analyze this file.
 		</p>
 	{:else if frames}
 		<div
-			class="relative min-h-0 min-w-0 flex-1 overflow-auto rounded-sm bg-slate-800 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+			class="relative min-h-0 min-w-0 flex-1 overflow-auto rounded-sm bg-stone-800 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			bind:this={scrollEl}
 			bind:clientWidth={containerWidth}
 			bind:clientHeight={containerHeight}
@@ -681,19 +734,21 @@
 						class="pointer-events-none absolute inset-y-0 w-px bg-white/80"
 						style="left: {(currentTime / duration) * 100}%"
 					></div>
-					<div
-						class="pointer-events-none absolute top-0 z-10 h-0 w-0 -translate-x-1/2 border-x-[5px] border-t-[7px] border-x-transparent border-t-white/90"
-						style="left: {(currentTime / duration) * 100}%"
-					></div>
+					<div class="pointer-events-none sticky top-0 z-10 h-0 w-full">
+						<div
+							class="absolute top-0 h-0 w-0 -translate-x-1/2 border-x-[5px] border-t-[7px] border-x-transparent border-t-white/90"
+							style="left: {(currentTime / duration) * 100}%"
+						></div>
+					</div>
 				{/if}
 				<!-- frozen note gutter: sticky to the left edge on time-scroll, scrolls normally with pitch-scroll -->
 				<div
-					class="sticky left-0 h-full w-8 text-[10px] text-slate-500"
+					class="sticky left-0 h-full w-8 text-[10px] text-stone-500"
 					on:wheel|preventDefault|stopPropagation={onGutterWheel}
 				>
 					{#each noteLabels as label (label.top)}
 						<span
-							class="absolute -translate-y-1/2 bg-slate-800/70 px-0.5 leading-none"
+							class="absolute -translate-y-1/2 bg-stone-800/70 px-0.5 leading-none"
 							style="top: {label.top}%">{label.name}</span
 						>
 					{/each}
@@ -703,7 +758,7 @@
 			     Draggable to scrub the playhead — seek math reads canvasEl's rect (see seekFromEvent),
 			     not this element's, since scroll offset would otherwise throw off the ratio. -->
 			<div
-				class="sticky bottom-0 h-4 cursor-ew-resize text-[10px] text-slate-400"
+				class="sticky bottom-0 h-4 cursor-ew-resize text-[10px] text-stone-400"
 				style="width: {canvasWidthPx}px; touch-action: none;"
 				role="slider"
 				tabindex="0"
@@ -717,34 +772,99 @@
 				on:pointercancel={onRulerPointerUp}
 			>
 				{#each ticks as tick (tick.t)}
-					<span class="absolute -translate-x-1/2 bg-slate-800/70 px-0.5" style="left: {tick.x}px"
+					<span class="absolute -translate-x-1/2 bg-stone-800/70 px-0.5" style="left: {tick.x}px"
 						>{secondsToTime(tick.t)}</span
 					>
 				{/each}
 			</div>
 		</div>
 	{:else}
-		<p class="flex flex-1 items-center justify-center text-sm text-slate-400">
+		<p class="flex flex-1 items-center justify-center text-sm text-stone-400">
 			Load a local audio file to see its pitchgram.
 		</p>
 	{/if}
 
-	<div class="mt-2 flex items-center justify-center gap-4 lg:hidden">
-		<button
-			class="rounded-lg bg-slate-800 px-4 py-2 text-lg hover:bg-slate-700"
-			on:click={jumpBack}
-			aria-label="Back">⏪</button
+	<!-- mobile transport bar: pitchgram takes the full viewport on a phone, so this is the only
+	     way back to speed/flag controls and the piano short of closing the view — see the
+	     mobileSheet comment above. Buttons are h-11 (44px) for a real touch target. -->
+	<div class="mt-2 flex items-center justify-center gap-2 lg:hidden">
+		<button class="{gridBtn} w-11 shrink-0" on:click={jumpBack} aria-label="Back 5 seconds"
+			><Icon name="backward" class={iconSize} /></button
 		>
 		<button
-			class="rounded-lg bg-slate-800 px-4 py-2 text-lg hover:bg-slate-700"
+			class="{primaryBtn} w-11 shrink-0"
 			on:click={togglePlayback}
-			aria-label={paused ? 'Play' : 'Pause'}>{paused ? '▶️' : '⏸'}</button
+			aria-label={paused ? 'Play' : 'Pause'}
+			><Icon name={paused ? 'play' : 'pause'} class={iconSize} /></button
+		>
+		<button class="{gridBtn} w-11 shrink-0" on:click={jumpForward} aria-label="Forward 5 seconds"
+			><Icon name="forward" class={iconSize} /></button
 		>
 		<button
-			class="rounded-lg bg-slate-800 px-4 py-2 text-lg hover:bg-slate-700"
-			on:click={jumpForward}
-			aria-label="Forward">⏩</button
+			class="{gridBtn} flex-1 gap-1.5 font-mono text-xs {mobileSheet === 'controls'
+				? 'bg-stone-700'
+				: ''}"
+			on:click={() => toggleSheet('controls')}
+			aria-pressed={mobileSheet === 'controls'}
+			aria-label="Speed and flag controls"
 		>
-		<span class="font-mono text-xs text-slate-400">{Math.round(playbackRate * 100)}%</span>
+			<Icon name="adjustments-horizontal" class="h-5 w-5" />{Math.round(playbackRate * 100)}%
+		</button>
+		<button
+			class="{gridBtn} w-11 shrink-0 {mobileSheet === 'piano' ? 'bg-stone-700' : ''}"
+			on:click={() => toggleSheet('piano')}
+			aria-pressed={mobileSheet === 'piano'}
+			aria-label="Piano reference"><Icon name="musical-note" class={iconSize} /></button
+		>
 	</div>
+
+	{#if mobileSheet !== 'none'}
+		<button
+			type="button"
+			transition:fade={{ duration: 150 }}
+			class="fixed inset-0 z-40 cursor-default bg-black/50 lg:hidden"
+			on:click={() => (mobileSheet = 'none')}
+			aria-label="Close panel"
+		></button>
+		<div
+			transition:fly={{ y: 320, duration: 220, opacity: 1 }}
+			class="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto rounded-t-xl border-t border-stone-800 bg-stone-900 p-4 lg:hidden"
+			style="padding-bottom: max(1rem, env(safe-area-inset-bottom))"
+		>
+			<div class="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-700"></div>
+			{#if mobileSheet === 'controls'}
+				<div class="flex flex-col gap-3">
+					<div class="grid grid-cols-3 gap-2">
+						<button class={gridBtn} on:click={slowDown} aria-label="Slow down"
+							><Icon name="minus" class={iconSize} /></button
+						>
+						<button
+							class="{gridBtn} font-mono text-sm"
+							on:click={resetSpeed}
+							aria-label="Reset speed to 100%">{Math.round(playbackRate * 100)}%</button
+						>
+						<button class={gridBtn} on:click={speedUp} aria-label="Speed up"
+							><Icon name="plus" class={iconSize} /></button
+						>
+					</div>
+					<div class="grid grid-cols-4 gap-2">
+						<button class={gridBtn} on:click={rewind} aria-label="Go to flag"
+							><Icon name="flag" class="{iconSize} text-orange-400" /></button
+						>
+						<button class={gridBtn} on:click={pushFlagBack} aria-label="Push flag back 1s"
+							><Icon name="chevron-left" class={iconSize} /></button
+						>
+						<button class={gridBtn} on:click={placeFlag} aria-label="Set flag"
+							><Icon name="flag-solid" class="{iconSize} text-orange-400" /></button
+						>
+						<button class={gridBtn} on:click={resetFlag} aria-label="Reset flag"
+							><Icon name="x-mark" class={iconSize} /></button
+						>
+					</div>
+				</div>
+			{:else}
+				<PianoReference />
+			{/if}
+		</div>
+	{/if}
 </div>

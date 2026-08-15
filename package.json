@@ -9,6 +9,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
+		"bench": "node scripts/bench-pitchgram.js",
 		"format": "prettier --write .",
 		"deploy": "gh-pages -d build -t"
 	},
@@ -25,6 +26,7 @@
 		"eslint-plugin-svelte": "3.23.0",
 		"gh-pages": "^6.3.0",
 		"globals": "17.11.0",
+		"heroicons": "^2.2.0",
 		"prettier": "^3.9.6",
 		"prettier-plugin-svelte": "^4.1.1",
 		"svelte": "^5.56.9",

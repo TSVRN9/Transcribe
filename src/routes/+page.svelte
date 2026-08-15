@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { fade } from 'svelte/transition';
 
 	import LocalAudio from './LocalAudio.svelte';
 	import YoutubeAudio from './YoutubeAudio.svelte';
 	import PitchgramView from './PitchgramView.svelte';
 	import PianoReference from './PianoReference.svelte';
-	import { invertObject, secondsToTime } from './utils';
+	import Icon from './Icon.svelte';
+	import { invertObject, secondsToTime, gridBtn, primaryBtn, iconSize, panel } from './utils';
 	import {
 		placeholderSeek,
 		type AudioReadyDetail,
@@ -179,13 +181,16 @@
 		if (b) behavior[b]();
 	}
 
-	// Home/End scroll the page by default on keydown, before keyup ever fires — suppress
-	// just that default here so jumping to start/end doesn't also yank the viewport
+	// Browsers apply their own default action to these keys on keydown, before keyup ever
+	// fires — Space scrolls the page and/or clicks whatever's focused, Home/End scroll the
+	// viewport, arrows nudge a focused range input. Suppress the default whenever the key is
+	// one of ours so only our shortcut runs, mirroring keyup's own guard.
 	function keydown(event: KeyboardEvent) {
 		const target = event.target as HTMLElement;
 		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
 			return;
-		if (event.key === 'Home' || event.key === 'End') event.preventDefault();
+		if (event.ctrlKey || event.metaKey || event.altKey) return;
+		if (event.key in shortcuts) event.preventDefault();
 	}
 
 	onMount(() => {
@@ -197,15 +202,34 @@
 		};
 	});
 
-	const gridBtn =
-		'rounded-lg bg-slate-800 py-3 text-xl transition-colors hover:enabled:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed';
 	const modeBtn =
-		'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default';
+		'flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default';
+	// tape-deck reels flanking the player panel — spin speed tracks playback rate, pause with playback.
+	// Pure decoration (aria-hidden), so no padding/border/background — just the icon, bigger than a
+	// normal control icon since it reads as faceplate detail, not something to click.
+	$: reelSpinStyle = `animation-duration: ${2 / playbackRate}s; animation-play-state: ${paused ? 'paused' : 'running'}`;
 </script>
 
-<header class="mx-auto max-w-xl px-4 pt-10 pb-6 text-center">
-	<h1 class="text-3xl font-bold">Transcribe</h1>
-	<p class="mt-1 text-slate-400">A simple media player for transcription work.</p>
+<header
+	class="relative mx-auto max-w-xl px-4 pt-10 pb-6 text-center {pitchgramOpen
+		? 'lg:max-w-6xl'
+		: ''}"
+>
+	{#if screen === 'player'}
+		<button
+			class="absolute top-9 left-4 rounded-md px-2 py-1 text-sm text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-200"
+			on:click={() => (screen = 'select')}>← Change source</button
+		>
+	{/if}
+	<h1
+		class="font-display text-4xl font-semibold tracking-wide text-stone-100 uppercase"
+		style="letter-spacing: 0.06em"
+	>
+		Transcribe
+	</h1>
+	<p class="mt-1 font-mono text-[11px] tracking-[0.3em] text-amber-500/70 uppercase">
+		Model TR‑1 · Tape Transcription Unit
+	</p>
 </header>
 
 <main class="mx-auto flex max-w-xl flex-col gap-4 px-4 pb-12 {pitchgramOpen ? 'lg:max-w-6xl' : ''}">
@@ -220,22 +244,25 @@
 			     (clipped + off-screen) rather than display:none — Chrome suspends metadata loading
 			     on a display:none <audio> element, which silently breaks seek/duration forever. -->
 			<div class="flex flex-col gap-4 {screen === 'select' ? '' : 'sr-only'}">
-				<div class="flex gap-2 rounded-xl bg-slate-800/50 p-4">
+				<div class="flex gap-2 {panel}">
 					<button
-						class="{modeBtn} {mode === 'local' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'}"
+						class="{modeBtn} flex items-center justify-center gap-1.5 {mode === 'local'
+							? 'bg-amber-500 text-stone-950'
+							: 'bg-stone-700 hover:bg-stone-600'}"
 						on:click={() => setMode('local')}
-						disabled={mode === 'local'}>🎵 Local File</button
+						disabled={mode === 'local'}
+						><Icon name="musical-note" class="h-4 w-4" /> Local File</button
 					>
 					<button
-						class="{modeBtn} {mode === 'youtube'
-							? 'bg-blue-600'
-							: 'bg-slate-700 hover:bg-slate-600'}"
+						class="{modeBtn} flex items-center justify-center gap-1.5 {mode === 'youtube'
+							? 'bg-amber-500 text-stone-950'
+							: 'bg-stone-700 hover:bg-stone-600'}"
 						on:click={() => setMode('youtube')}
-						disabled={mode === 'youtube'}>▶️ YouTube</button
+						disabled={mode === 'youtube'}><Icon name="film" class="h-4 w-4" /> YouTube</button
 					>
 				</div>
 
-				<div class="rounded-xl bg-slate-800/50 p-4">
+				<div class={panel}>
 					{#if mode === 'local'}
 						<LocalAudio
 							bind:playbackRate
@@ -262,22 +289,45 @@
 
 				{#if isReady}
 					<button
-						class="rounded-lg bg-slate-800 py-3 text-sm font-medium hover:bg-slate-700"
+						class="rounded-md bg-stone-800 py-3 text-sm font-medium hover:bg-stone-700"
 						on:click={() => (screen = 'player')}>→ Back to player</button
 					>
 				{/if}
 			</div>
 
 			{#if screen === 'player'}
-				<button
-					class="self-start rounded-lg px-2 py-1 text-sm text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-					on:click={() => (screen = 'select')}>← Change source</button
-				>
-
-				<div class="flex flex-col gap-4 rounded-xl bg-slate-800/50 p-4">
-					<div class="flex justify-center gap-6 font-mono text-lg">
-						<strong>⏱️ {secondsToTime(currentTime)}</strong>
-						<span>🚩 {secondsToTime(flag)}</span>
+				<div class="relative flex flex-col gap-4 {panel}">
+					<span
+						class="absolute -top-4 -left-4 animate-spin"
+						style={reelSpinStyle}
+						aria-hidden="true"
+					>
+						<Icon name="tape-reel" class="h-8 w-8 text-stone-500 sm:h-10 sm:w-10" />
+					</span>
+					<span
+						class="absolute -top-4 -right-4 animate-spin"
+						style={reelSpinStyle}
+						aria-hidden="true"
+					>
+						<Icon name="tape-reel" class="h-8 w-8 text-stone-500 sm:h-10 sm:w-10" />
+					</span>
+					<div
+						class="flex items-stretch justify-center divide-x divide-stone-800 rounded-sm border border-stone-800 bg-stone-950"
+					>
+						<div class="flex flex-1 items-center justify-center gap-2 px-4 py-2.5">
+							<span
+								class="font-mono text-lg tracking-[0.15em] text-amber-400"
+								style="text-shadow: 0 0 8px rgba(251, 191, 36, 0.45)"
+								>{secondsToTime(currentTime)}</span
+							>
+						</div>
+						<div class="flex flex-1 items-center justify-center gap-2 px-4 py-2.5">
+							<Icon name="flag-solid" class="h-4 w-4 text-orange-500" />
+							<span
+								class="font-mono text-lg tracking-[0.15em] text-orange-400"
+								style="text-shadow: 0 0 8px rgba(251, 146, 60, 0.45)">{secondsToTime(flag)}</span
+							>
+						</div>
 					</div>
 
 					<input
@@ -285,10 +335,11 @@
 						aria-label="Seek"
 						value={currentTime}
 						on:input={(e) => seek(e.currentTarget.valueAsNumber)}
+						on:pointerup={(e) => e.currentTarget.blur()}
 						min="0"
 						max={audiolength}
 						step="0.1"
-						class="w-full accent-blue-500"
+						class="h-1.5 w-full appearance-none rounded-full bg-stone-800 accent-amber-500"
 					/>
 
 					<div class="grid grid-cols-3 gap-2">
@@ -296,19 +347,20 @@
 							class={gridBtn}
 							on:click={jumpBack}
 							title={tooltip('jumpBack')}
-							aria-label={tooltip('jumpBack')}>⏪</button
+							aria-label={tooltip('jumpBack')}><Icon name="backward" class={iconSize} /></button
 						>
 						<button
-							class={gridBtn}
+							class={primaryBtn}
 							on:click={togglePlayback}
 							title={tooltip('togglePlayback')}
-							aria-label={tooltip('togglePlayback')}>{paused ? '▶️' : '⏸'}</button
+							aria-label={tooltip('togglePlayback')}
+							><Icon name={paused ? 'play' : 'pause'} class={iconSize} /></button
 						>
 						<button
 							class={gridBtn}
 							on:click={jumpForward}
 							title={tooltip('jumpForward')}
-							aria-label={tooltip('jumpForward')}>⏩</button
+							aria-label={tooltip('jumpForward')}><Icon name="forward" class={iconSize} /></button
 						>
 					</div>
 					<div class="grid grid-cols-4 gap-2">
@@ -316,25 +368,28 @@
 							class={gridBtn}
 							on:click={rewind}
 							title={tooltip('rewind')}
-							aria-label={tooltip('rewind')}>⏮</button
+							aria-label={tooltip('rewind')}
+							><Icon name="flag" class="{iconSize} text-orange-400" /></button
 						>
 						<button
 							class={gridBtn}
 							on:click={pushFlagBack}
 							title={tooltip('pushFlagBack')}
-							aria-label={tooltip('pushFlagBack')}>◀️</button
+							aria-label={tooltip('pushFlagBack')}
+							><Icon name="chevron-left" class={iconSize} /></button
 						>
 						<button
 							class={gridBtn}
 							on:click={placeFlag}
 							title={tooltip('placeFlag')}
-							aria-label={tooltip('placeFlag')}>🚩</button
+							aria-label={tooltip('placeFlag')}
+							><Icon name="flag-solid" class="{iconSize} text-orange-400" /></button
 						>
 						<button
 							class={gridBtn}
 							on:click={resetFlag}
 							title={tooltip('resetFlag')}
-							aria-label={tooltip('resetFlag')}>❌</button
+							aria-label={tooltip('resetFlag')}><Icon name="x-mark" class={iconSize} /></button
 						>
 					</div>
 					<div class="grid grid-cols-3 gap-2">
@@ -342,7 +397,7 @@
 							class={gridBtn}
 							on:click={slowDown}
 							title={tooltip('slowDown')}
-							aria-label={tooltip('slowDown')}>🐢</button
+							aria-label={tooltip('slowDown')}><Icon name="minus" class={iconSize} /></button
 						>
 						<button
 							class="{gridBtn} font-mono text-sm"
@@ -354,26 +409,34 @@
 							class={gridBtn}
 							on:click={speedUp}
 							title={tooltip('speedUp')}
-							aria-label={tooltip('speedUp')}>🐇</button
+							aria-label={tooltip('speedUp')}><Icon name="plus" class={iconSize} /></button
 						>
 					</div>
 
 					{#if mode === 'local'}
 						<button
-							class="rounded-lg bg-slate-800 py-3 text-sm font-medium hover:bg-slate-700"
-							on:click={() => (pitchgramOpen = true)}>🎹 Open Pitchgram</button
+							class="flex items-center justify-center gap-2 rounded-md bg-stone-800 py-3 text-sm font-medium hover:bg-stone-700"
+							on:click={() => (pitchgramOpen = true)}
+							><Icon name="presentation-chart-line" class="h-5 w-5" /> Open Pitchgram</button
 						>
+					{:else}
+						<p
+							class="flex items-center justify-center gap-2 rounded-md border border-stone-800 py-3 text-center text-sm text-stone-500"
+							title="Pitchgram analyzes raw audio samples, which the YouTube IFrame player never exposes — switch to a local file to use it."
+						>
+							<Icon name="presentation-chart-line" class="h-5 w-5" /> Pitchgram needs a local audio file
+						</p>
 					{/if}
 
-					<details class="rounded-lg bg-slate-900/50 px-3 py-2">
-						<summary class="cursor-pointer text-sm font-medium text-slate-300"
+					<details class="rounded-md border border-stone-800 bg-stone-950/50 px-3 py-2">
+						<summary class="cursor-pointer text-sm font-medium text-stone-300"
 							>Keyboard shortcuts</summary
 						>
-						<ul class="mt-2 space-y-1 text-sm text-slate-400">
+						<ul class="mt-2 space-y-1 text-sm text-stone-400">
 							{#each Object.entries(behaviorToShortcuts) as [b, key] (b)}
 								<li>
 									<kbd
-										class="rounded-sm border border-slate-600 bg-slate-700 px-1.5 py-0.5 font-mono text-xs"
+										class="rounded-sm border border-stone-600 bg-stone-700 px-1.5 py-0.5 font-mono text-xs"
 										>{key === ' ' ? 'Space' : key}</kbd
 									>
 									— {label(b)}
@@ -389,7 +452,8 @@
 
 		{#if pitchgramOpen}
 			<div
-				class="fixed inset-0 z-40 flex min-w-0 flex-col bg-slate-900 p-3 lg:static lg:inset-auto lg:z-auto lg:h-[75vh] lg:flex-1 lg:rounded-xl lg:bg-slate-800/50 lg:p-4"
+				transition:fade={{ duration: 150 }}
+				class="fixed inset-0 z-40 flex min-w-0 flex-col bg-stone-950 p-3 lg:static lg:inset-auto lg:z-auto lg:h-[75vh] lg:flex-1 lg:rounded-md lg:border lg:border-stone-800 lg:bg-stone-900 lg:p-4"
 			>
 				<PitchgramView
 					status={pitchStatus}
@@ -406,6 +470,13 @@
 					{togglePlayback}
 					{jumpBack}
 					{jumpForward}
+					{speedUp}
+					{slowDown}
+					{placeFlag}
+					{pushFlagBack}
+					{resetFlag}
+					{rewind}
+					resetSpeed={() => (playbackRate = 1)}
 					onClose={() => (pitchgramOpen = false)}
 				/>
 			</div>

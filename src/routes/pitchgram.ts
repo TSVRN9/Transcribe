@@ -442,7 +442,16 @@ function extractLinesFromNoteFrames(noteFrames: number[][]): PitchLines {
  */
 export async function computeBasicPitch(
 	samples: Float32Array,
-	modelUrl: string
+	modelUrl: string,
+	// the file's real playback duration (HTMLMediaElement.duration), NOT samples.length /
+	// NATIVE_SAMPLE_RATE — decoding an MP3 through decodeAudioData can land on a slightly
+	// different sample count than what the browser's own <audio> element reports as duration
+	// (LAME encoder delay/padding is the usual cause). maxPoolRows below buckets by real
+	// seconds, and the UI positions the playhead/ticks/ruler using the <audio> element's
+	// duration too — bucketing against a different duration here would silently drift the
+	// heatmap out of sync with playback, worse the further into the clip you go. Falls back
+	// to the decoded-sample estimate only if the caller doesn't have a real duration yet.
+	durationSeconds?: number
 ): Promise<BasicPitchResult> {
 	const model = await getBasicPitch(modelUrl);
 
@@ -465,9 +474,9 @@ export async function computeBasicPitch(
 			raw: { frames: [], onsets: [] }
 		};
 
-	const durationSeconds = samples.length / NATIVE_SAMPLE_RATE;
-	const pooledFrames = maxPoolRows(frameRows, TARGET_FRAMES, durationSeconds);
-	const pooledContours = maxPoolRows(contourRows, TARGET_FRAMES, durationSeconds);
+	const effectiveDuration = durationSeconds || samples.length / NATIVE_SAMPLE_RATE;
+	const pooledFrames = maxPoolRows(frameRows, TARGET_FRAMES, effectiveDuration);
+	const pooledContours = maxPoolRows(contourRows, TARGET_FRAMES, effectiveDuration);
 
 	const totalBins = OCTAVE_COUNT * BINS_PER_OCTAVE;
 	const contourLo = (RENDER_BASE_MIDI - CONTOUR_BASE_MIDI) * CONTOUR_BINS_PER_SEMITONE;

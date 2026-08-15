@@ -140,13 +140,13 @@
 		bind:value={videoLink}
 		placeholder="Paste YouTube link"
 		on:keydown={(e) => e.key === 'Enter' && loadVideo()}
-		class="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+		class="flex-1 rounded-md bg-stone-950 px-3 py-2 text-sm placeholder:text-stone-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
 	/>
 	<button
 		on:click={loadVideo}
 		disabled={!apiReady}
 		aria-busy={!apiReady}
-		class="shrink-0 rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+		class="shrink-0 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-amber-500 disabled:cursor-not-allowed disabled:bg-stone-700 disabled:opacity-50"
 	>
 		{apiReady ? 'Load Video' : 'Loading player…'}
 	</button>
