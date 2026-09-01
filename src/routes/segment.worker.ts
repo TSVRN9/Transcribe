@@ -5,7 +5,8 @@
 // Imports the toMidi submodule directly (@spotify/basic-pitch/esm/toMidi.js) rather than the
 // package's top-level barrel, specifically to avoid pulling tf.js into this worker: this
 // algorithm doesn't need it, and tf.js isn't guaranteed to behave well outside a window context.
-import type { NoteSegmentSettings } from './pitchgram';
+/// <reference lib="webworker" />
+import type { NoteSegmentSettings, RawModelOutput } from './pitchgram';
 
 export interface RawNoteEvent {
 	pitchMidi: number;
@@ -15,15 +16,17 @@ export interface RawNoteEvent {
 }
 
 export type WorkerRequest =
-	| { type: 'setRaw'; raw: { frames: number[][]; onsets: number[][] } }
+	| { type: 'setRaw'; raw: RawModelOutput }
 	| { type: 'segment'; id: number; settings: NoteSegmentSettings };
-export type WorkerResponse = { type: 'result'; id: number; notes: RawNoteEvent[] };
+export type WorkerResponse =
+	| { type: 'result'; id: number; notes: RawNoteEvent[] }
+	| { type: 'error'; id: number; message: string };
 
-const ctx = self as unknown as Worker;
+const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 // cached across calls so re-segmenting on a settings change doesn't re-send the whole
 // (multi-MB, native-fps) frames/onsets payload — only 'setRaw' does that, once per file
-let currentRaw: { frames: number[][]; onsets: number[][] } | undefined;
+let currentRaw: RawModelOutput | undefined;
 
 ctx.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 	const msg = e.data;
@@ -37,24 +40,33 @@ ctx.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 		return;
 	}
 
-	const { outputToNotesPoly } = await import('@spotify/basic-pitch/esm/toMidi.js');
-	const { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick } = msg.settings;
-	const noteEvents = outputToNotesPoly(
-		currentRaw.frames.map((r) => r.slice()), // outputToNotesPoly mutates in place when min/maxFreq are set
-		currentRaw.onsets.map((r) => r.slice()),
-		onsetThresh,
-		frameThresh,
-		minNoteLen,
-		inferOnsets,
-		null,
-		null,
-		melodiaTrick
-	);
-	const notes: RawNoteEvent[] = noteEvents.map((n) => ({
-		pitchMidi: n.pitchMidi,
-		startFrame: n.startFrame,
-		durationFrames: n.durationFrames,
-		amplitude: n.amplitude
-	}));
-	ctx.postMessage({ type: 'result', id: msg.id, notes } satisfies WorkerResponse);
+	// Caught explicitly (rather than left to throw) because a rejection from an async
+	// onmessage handler fires 'unhandledrejection' inside the worker, not the main thread's
+	// worker.onerror — an uncaught failure here would otherwise leave the caller's promise
+	// pending forever with no signal that anything went wrong.
+	try {
+		const { outputToNotesPoly } = await import('@spotify/basic-pitch/esm/toMidi.js');
+		const { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick } = msg.settings;
+		const noteEvents = outputToNotesPoly(
+			currentRaw.frames.map((r) => r.slice()), // outputToNotesPoly mutates in place when min/maxFreq are set
+			currentRaw.onsets.map((r) => r.slice()),
+			onsetThresh,
+			frameThresh,
+			minNoteLen,
+			inferOnsets,
+			null,
+			null,
+			melodiaTrick
+		);
+		const notes: RawNoteEvent[] = noteEvents.map((n) => ({
+			pitchMidi: n.pitchMidi,
+			startFrame: n.startFrame,
+			durationFrames: n.durationFrames,
+			amplitude: n.amplitude
+		}));
+		ctx.postMessage({ type: 'result', id: msg.id, notes } satisfies WorkerResponse);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		ctx.postMessage({ type: 'error', id: msg.id, message } satisfies WorkerResponse);
+	}
 };

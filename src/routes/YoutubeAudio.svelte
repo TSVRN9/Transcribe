@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { onMount, afterUpdate, createEventDispatcher, onDestroy } from 'svelte';
+	import { onMount, createEventDispatcher, onDestroy } from 'svelte';
 	import { placeholderSeek, type AudioReady, type AudioCurrentTime } from './audio';
 
-	export let playbackRate: number;
-	export let paused: boolean;
-	export let volume: number;
-	export let muted: boolean;
+	// defaulted to match LocalAudio's props — the two are meant to be interchangeable behind
+	// the same parent contract (see audio.ts), so one shouldn't require what the other doesn't
+	export let playbackRate: number = 1;
+	export let paused: boolean = true;
+	export let volume: number = 1;
+	export let muted: boolean = false;
 
 	const readyDispatch = createEventDispatcher<AudioReady>();
 	const currentTimeDispatch = createEventDispatcher<AudioCurrentTime>();
@@ -22,7 +24,7 @@
 			} else {
 				return videoLink ? new URLSearchParams(url.search).get('v') : undefined;
 			}
-		} catch (e) {
+		} catch {
 			return undefined;
 		}
 	})();
@@ -30,9 +32,17 @@
 	let error = '';
 	let intervalId: ReturnType<typeof setInterval>;
 
+	const seek = (time: number) => player?.seekTo(time, true);
+
+	// The IFrame API fires onReady once per player *instance*, not once per loaded video —
+	// so readiness (and getDuration(), which changes per video) is dispatched from
+	// onStateChange instead, which fires for every loadVideoById() call on the same
+	// instance too. CUED covers a paused/first load, PLAYING covers autoplay kicking in.
 	const loadVideo = () => {
 		error = '';
-		if (!videoId || !apiReady) {
+		if (!apiReady) return; // button is disabled + labeled "Loading player…" in this state
+		if (!videoId) {
+			error = "Couldn't find a video ID in that link.";
 			return;
 		}
 
@@ -58,28 +68,28 @@
 			events: {
 				onReady: () => {
 					player = youtubePlayer;
-					readyDispatch('ready', {
-						isReady: true,
-						audioLength: youtubePlayer.getDuration(),
-						seek: (time: number) => {
-							player?.seekTo(time, true);
-						}
-					});
 				},
-				onError: (event: any) => {
+				onError: (event: YT.OnErrorEvent) => {
 					error = 'Error: Unable to play the video.';
 					console.error('YouTube Player Error:', event.data);
-					readyDispatch('ready', {
-						isReady: false,
-						audioLength: 0,
-						seek: placeholderSeek
-					});
+					// don't leave a broken instance around — the next loadVideo() should build a
+					// fresh player rather than take the loadVideoById branch on this one
+					player?.destroy();
+					player = undefined;
+					readyDispatch('ready', { isReady: false, audioLength: 0, seek: placeholderSeek });
 				},
-				onStateChange: (event: any) => {
+				onStateChange: (event: YT.OnStateChangeEvent) => {
 					if (event.data === YT.PlayerState.PLAYING) {
 						paused = false;
 					} else if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.ENDED) {
 						paused = true;
+					}
+					if (event.data === YT.PlayerState.CUED || event.data === YT.PlayerState.PLAYING) {
+						readyDispatch('ready', {
+							isReady: true,
+							audioLength: youtubePlayer.getDuration(),
+							seek
+						});
 					}
 				}
 			}
@@ -90,7 +100,7 @@
 		if (typeof YT !== 'undefined' && YT.Player) {
 			apiReady = true;
 		} else {
-			(window as any).onYouTubeIframeAPIReady = () => {
+			window.onYouTubeIframeAPIReady = () => {
 				apiReady = true;
 			};
 			if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
@@ -100,12 +110,17 @@
 			}
 		}
 
+		// the IFrame API has no timeupdate event; polling is the only option. 250ms rather
+		// than 50ms — the transport display rounds to whole seconds anyway (secondsToTime in
+		// utils.ts), so 50ms bought nothing visible while re-rendering the parent (and
+		// PitchgramView's reactive block) 20 times a second regardless of whether anything's
+		// even playing.
 		intervalId = setInterval(() => {
 			if (player)
 				currentTimeDispatch('currentTime', {
 					currentTime: player.getCurrentTime()
 				});
-		}, 50);
+		}, 250);
 	});
 
 	onDestroy(() => {
@@ -114,24 +129,20 @@
 		clearInterval(intervalId);
 	});
 
-	afterUpdate(() => {
-		if (player) {
-			if (player.getPlaybackRate() != playbackRate) {
-				player.setPlaybackRate(playbackRate);
-			}
-			if (paused) {
-				player.pauseVideo();
-			} else {
-				player.playVideo();
-			}
-			player.setVolume(volume * 100);
-			if (muted) {
-				player.mute();
-			} else {
-				player.unMute();
-			}
-		}
-	});
+	// Per-prop reactive statements instead of one afterUpdate that fired all four calls on
+	// every render regardless of which prop actually changed — also the direct portable
+	// equivalent of $effect for a future runes migration, unlike afterUpdate (which doesn't
+	// exist in runes mode at all).
+	$: if (player && player.getPlaybackRate() !== playbackRate) player.setPlaybackRate(playbackRate);
+	$: if (player) {
+		if (paused) player.pauseVideo();
+		else player.playVideo();
+	}
+	$: if (player) player.setVolume(volume * 100);
+	$: if (player) {
+		if (muted) player.mute();
+		else player.unMute();
+	}
 </script>
 
 <div class="flex gap-2">

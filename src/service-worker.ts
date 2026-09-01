@@ -22,12 +22,43 @@ const SHARE_CACHE = 'share-target';
 // page's location.href the caller is resolving from — a bare string resolves relative to that
 const SHARE_CACHE_KEY = '/shared-audio';
 
+// The basic-pitch model (.json + .bin) is deliberately excluded from the precache manifest
+// (see vite.config.ts's globIgnores) so visitors who never open the pitchgram don't pay for
+// it. This caches it the first time it's actually requested instead, and serves cache-first
+// after that — same offline support the eager precache would have given, just paid for by
+// the people who actually use the feature.
+const MODEL_CACHE = 'basic-pitch-model';
+const MODEL_PATH_PREFIX = '/Transcribe/basic-pitch-model/';
+
 self.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url);
 	if (event.request.method === 'POST' && url.pathname === SHARE_TARGET_PATH) {
 		event.respondWith(handleShareTarget(event.request));
+		return;
+	}
+	if (event.request.method === 'GET' && url.pathname.startsWith(MODEL_PATH_PREFIX)) {
+		event.respondWith(handleModelRequest(event.request));
 	}
 });
+
+// Stale-while-revalidate, not plain cache-first: the model files aren't content-hashed (they're
+// static/ passthroughs, not part of the build's asset pipeline), so a redeployed model update
+// would otherwise serve the old cached bytes forever — the URL never changes to bust it. Serving
+// the cached copy immediately (fast, works offline) while a background fetch refreshes the cache
+// for next time means a redeploy self-heals within one extra load instead of staying stale.
+async function handleModelRequest(request: Request): Promise<Response> {
+	const cache = await caches.open(MODEL_CACHE);
+	const cached = await cache.match(request);
+	const refresh = fetch(request).then((response) => {
+		if (response.ok) cache.put(request, response.clone());
+		return response;
+	});
+	if (cached) {
+		refresh.catch(() => {}); // best-effort background refresh — offline/network errors here are fine, the cached copy already served
+		return cached;
+	}
+	return refresh;
+}
 
 async function handleShareTarget(request: Request): Promise<Response> {
 	const formData = await request.formData();

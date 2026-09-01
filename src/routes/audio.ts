@@ -1,4 +1,4 @@
-import type { PitchgramResult, PitchLines } from './pitchgram';
+import type { PitchgramResult, PitchLines, RawModelOutput } from './pitchgram';
 
 export type SeekFunction = (time: number) => void;
 export type AudioReady = {
@@ -12,7 +12,7 @@ export type AudioReadyDetail = {
 export type AudioCurrentTime = {
 	currentTime: AudioCurrentTimeDetail;
 };
-export type AudioCurrentTimeDetail = {
+type AudioCurrentTimeDetail = {
 	currentTime: number;
 };
 export const placeholderSeek: SeekFunction = () => {
@@ -29,10 +29,14 @@ export type PitchEvent = {
 	pitch: PitchEventDetail;
 };
 export type PitchEventDetail =
-	| { status: 'idle' | 'computing' | 'error' }
+	| { status: 'idle' | 'error' }
+	// `partial` carries whatever's been analyzed so far (basic-pitch streams results in
+	// ~1.6s windows) so the view can render a real pitchgram instead of only a spinner
+	// while status stays 'computing' — see computeBasicPitch's onProgress in pitchgram.ts.
+	| { status: 'computing'; partial?: { result: PitchgramResult; lines: PitchLines } }
 	| {
 			status: 'done';
 			result: PitchgramResult;
 			lines: PitchLines;
-			raw: { frames: number[][]; onsets: number[][] };
+			raw: RawModelOutput;
 	  };

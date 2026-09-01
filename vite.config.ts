@@ -57,8 +57,13 @@ export default defineConfig({
 				}
 			},
 			injectManifest: {
-				// include the basic-pitch model (.json/.bin) so the pitchgram view also works offline
-				globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,woff,woff2,json,bin}']
+				globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,woff,woff2,json,bin}'],
+				// the basic-pitch model (.json + .bin, ~900KB) is excluded from the *eager*
+				// precache on purpose — most visitors never open the pitchgram, so shipping it to
+				// everyone on first visit costs bandwidth for a feature most won't use. It's still
+				// cached for offline use, just on first *use* instead of first *visit* — see the
+				// runtime cache-first handler in src/service-worker.ts.
+				globIgnores: ['**/basic-pitch-model/**']
 			}
 		})
 	]

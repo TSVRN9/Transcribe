@@ -16,22 +16,39 @@
 		type PitchEventDetail,
 		type PitchAnalyzer
 	} from './audio';
-	import type { PitchgramResult, PitchLines } from './pitchgram';
+	import type { Behavior } from './behavior';
+	import type { PitchgramResult, PitchLines, RawModelOutput } from './pitchgram';
 	import { sharedFile } from './shareTarget';
 
 	let mode: 'local' | 'youtube' = 'local';
 
 	// a share-target hand-off always means "play this local file" — switch source even if
-	// YouTube mode was active so LocalAudio mounts and can pick the file up
-	$: if ($sharedFile && mode !== 'local') setMode('local');
+	// YouTube mode was active so LocalAudio mounts and can pick the file up. Skips the confirm
+	// gate below: the user already made this choice by sharing a file into the app, a modal
+	// asking them to confirm their own action would just be in the way (and if unanswered
+	// would strand $sharedFile unconsumed, since a declined confirm leaves mode unchanged).
+	$: if ($sharedFile && mode !== 'local') setMode('local', { confirm: false });
 
 	// two-screen flow: pick a source, then the player. 'select' stays mounted underneath
 	// (hidden via CSS, not {#if}) so LocalAudio/YoutubeAudio never unmount and lose
 	// playback/decoded state when the user comes back to change source.
 	let screen: 'select' | 'player' = 'select';
 
-	function setMode(newMode: 'local' | 'youtube') {
+	// Switching source unmounts the losing component (LocalAudio/YoutubeAudio, see the
+	// {#if mode ...} below), which silently drops its loaded file/video, flag position, and
+	// any completed pitch analysis. Confirm first whenever there's something real to lose —
+	// this is a UI guard, not a fix for the underlying unmount (see the comment at the
+	// {#if mode ...} block for why keeping both mounted isn't the easy swap it looks like).
+	function setMode(newMode: 'local' | 'youtube', { confirm: shouldConfirm = true } = {}) {
 		if (mode === newMode) return;
+		if (
+			shouldConfirm &&
+			(isReady || flag > 0) &&
+			!confirm(
+				'Switching source will discard the current file/video, flag, and pitch analysis. Continue?'
+			)
+		)
+			return;
 		mode = newMode;
 		isReady = false;
 		currentTime = 0;
@@ -39,6 +56,14 @@
 		seek = placeholderSeek;
 		pitchgramOpen = false;
 		screen = 'select';
+		// pitchStatus/pitchResult/pitchLines/pitchRaw aren't reset by handlePitch until the new
+		// mode's source dispatches its own 'pitch' event — reset them here too, so a pitchgram
+		// opened before that happens doesn't render the old mode's analysis against this mode's
+		// (zero) duration.
+		pitchStatus = 'idle';
+		pitchResult = undefined;
+		pitchLines = undefined;
+		pitchRaw = undefined;
 	}
 
 	// pitchgram view (local audio only — YouTube gives no raw samples to analyze)
@@ -47,7 +72,7 @@
 	let pitchAnalyzer: PitchAnalyzer = 'neural';
 	let pitchResult: PitchgramResult | undefined;
 	let pitchLines: PitchLines | undefined;
-	let pitchRaw: { frames: number[][]; onsets: number[][] } | undefined;
+	let pitchRaw: RawModelOutput | undefined;
 
 	function handlePitch(e: CustomEvent<PitchEventDetail>) {
 		pitchStatus = e.detail.status;
@@ -55,6 +80,11 @@
 			pitchResult = e.detail.result;
 			pitchLines = e.detail.lines;
 			pitchRaw = e.detail.raw;
+		} else if (e.detail.status === 'computing' && e.detail.partial) {
+			// a partial result while still computing — render it, but raw stays whatever it
+			// was (Notes/Voices need the final onset/frame data, which only 'done' carries)
+			pitchResult = e.detail.partial.result;
+			pitchLines = e.detail.partial.lines;
 		} else {
 			pitchResult = undefined;
 			pitchLines = undefined;
@@ -87,19 +117,6 @@
 	}
 
 	// behavior
-	type Behavior =
-		| 'placeFlag'
-		| 'pushFlagBack'
-		| 'resetFlag'
-		| 'rewind'
-		| 'speedUp'
-		| 'slowDown'
-		| 'togglePlayback'
-		| 'jumpBack'
-		| 'jumpForward'
-		| 'goToStart'
-		| 'goToEnd';
-
 	const behavior: Record<Behavior, VoidFunction> = {
 		placeFlag: () => (flag = currentTime),
 		pushFlagBack: () => (flag = Math.max(0, flag - 1)),
@@ -171,36 +188,63 @@
 		return behaviorToShortcuts[b];
 	}
 
-	function keyup(event: KeyboardEvent) {
-		const target = event.target as HTMLElement;
-		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-			return;
-		if (event.ctrlKey || event.metaKey || event.altKey) return;
-
-		const b = shortcuts[event.key];
-		if (b) behavior[b]();
+	// Elements that keep their own keyboard behavior instead of ours — text entry, native
+	// <select>/<summary> (whose own arrow/Space handling our preventDefault below would
+	// otherwise hijack), and anything contenteditable. <button> is deliberately NOT here:
+	// Space after clicking Play should toggle playback once via our shortcut, not
+	// scroll/re-click through the browser's own default too (see keydown's comment).
+	const SHORTCUT_EXEMPT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
+	function isShortcutExempt(target: EventTarget | null): boolean {
+		const el = target as HTMLElement | null;
+		return !!el && (SHORTCUT_EXEMPT_TAGS.has(el.tagName) || el.isContentEditable);
 	}
 
-	// Browsers apply their own default action to these keys on keydown, before keyup ever
-	// fires — Space scrolls the page and/or clicks whatever's focused, Home/End scroll the
-	// viewport, arrows nudge a focused range input. Suppress the default whenever the key is
-	// one of ours so only our shortcut runs, mirroring keyup's own guard.
+	// Repeatable while a key is held (native OS auto-repeat is exactly what you want for
+	// ramping speed/seek). Everything else fires once per physical press only:
+	// auto-repeating togglePlayback would flicker play/pause on every OS repeat, and
+	// pushFlagBack deliberately isn't here either — the flag is a manually-placed marker
+	// with no "undo" direction, so holding 's' walking it to 0 in under a second at OS
+	// repeat rate would be a real, unrecoverable data-loss footgun, not a convenience.
+	// `event.repeat` (native) distinguishes repeatable from one-shot without a manual timer.
+	const REPEATABLE_BEHAVIORS: ReadonlySet<Behavior> = new Set([
+		'jumpBack',
+		'jumpForward',
+		'speedUp',
+		'slowDown'
+	]);
+
+	// Browsers apply their own default action to these keys on keydown — Space scrolls the
+	// page and/or clicks whatever's focused, Home/End scroll the viewport, arrows nudge a
+	// focused range input. Suppress the default whenever the key is one of ours so only our
+	// shortcut runs. Firing the behavior here too (not on keyup) lets a held key auto-repeat
+	// the shortcut the same way holding an arrow key repeats in any text field.
 	function keydown(event: KeyboardEvent) {
-		const target = event.target as HTMLElement;
-		if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
-			return;
+		if (isShortcutExempt(event.target)) return;
 		if (event.ctrlKey || event.metaKey || event.altKey) return;
-		if (event.key in shortcuts) event.preventDefault();
+		const b = shortcuts[event.key];
+		if (!b) return;
+		event.preventDefault();
+		if (event.repeat && !REPEATABLE_BEHAVIORS.has(b)) return;
+		behavior[b]();
 	}
 
 	onMount(() => {
 		document.addEventListener('keydown', keydown);
-		document.addEventListener('keyup', keyup);
-		return () => {
-			document.removeEventListener('keydown', keydown);
-			document.removeEventListener('keyup', keyup);
-		};
+		return () => document.removeEventListener('keydown', keydown);
 	});
+
+	// Keyboard-shortcut legend: opened by default the first time only (then respects
+	// whatever the user leaves it at), read from localStorage — the app's main value
+	// proposition is otherwise invisible to a first-time user until they stumble onto it.
+	// Starts closed for the prerendered/pre-mount render (no localStorage on the server);
+	// onMount flips it open before paint if this browser hasn't seen it before.
+	let shortcutsOpen = false;
+	onMount(() => {
+		shortcutsOpen = localStorage.getItem('transcribe-shortcuts-seen') !== '1';
+	});
+	function markShortcutsSeen() {
+		localStorage.setItem('transcribe-shortcuts-seen', '1');
+	}
 
 	const modeBtn =
 		'flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default';
@@ -250,7 +294,7 @@
 							? 'bg-amber-500 text-stone-950'
 							: 'bg-stone-700 hover:bg-stone-600'}"
 						on:click={() => setMode('local')}
-						disabled={mode === 'local'}
+						aria-pressed={mode === 'local'}
 						><Icon name="musical-note" class="h-4 w-4" /> Local File</button
 					>
 					<button
@@ -258,11 +302,16 @@
 							? 'bg-amber-500 text-stone-950'
 							: 'bg-stone-700 hover:bg-stone-600'}"
 						on:click={() => setMode('youtube')}
-						disabled={mode === 'youtube'}><Icon name="film" class="h-4 w-4" /> YouTube</button
+						aria-pressed={mode === 'youtube'}><Icon name="film" class="h-4 w-4" /> YouTube</button
 					>
 				</div>
 
 				<div class={panel}>
+					<!-- Unmounts the losing source on switch (setMode's confirm guards the data loss).
+					     Deliberately not "stays mounted, hidden" like the screen toggle above: paused/
+					     playbackRate/volume/muted are bound to both LocalAudio and YoutubeAudio here —
+					     if both were mounted at once, playing one would call playVideo()/setVolume() on
+					     the other too via its own reactive afterUpdate, so only one may exist at a time. -->
 					{#if mode === 'local'}
 						<LocalAudio
 							bind:playbackRate
@@ -428,7 +477,11 @@
 						</p>
 					{/if}
 
-					<details class="rounded-md border border-stone-800 bg-stone-950/50 px-3 py-2">
+					<details
+						class="rounded-md border border-stone-800 bg-stone-950/50 px-3 py-2"
+						bind:open={shortcutsOpen}
+						on:toggle={markShortcutsSeen}
+					>
 						<summary class="cursor-pointer text-sm font-medium text-stone-300"
 							>Keyboard shortcuts</summary
 						>
@@ -467,15 +520,7 @@
 					{seek}
 					{paused}
 					{playbackRate}
-					{togglePlayback}
-					{jumpBack}
-					{jumpForward}
-					{speedUp}
-					{slowDown}
-					{placeFlag}
-					{pushFlagBack}
-					{resetFlag}
-					{rewind}
+					{behavior}
 					resetSpeed={() => (playbackRate = 1)}
 					onClose={() => (pitchgramOpen = false)}
 				/>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { createEventDispatcher, onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { base } from '$app/paths';
 	import type {
@@ -54,6 +54,24 @@
 	let time: number = 0;
 	let duration: number = 0;
 
+	// Each file picked mints a fresh blob URL; without revoking the previous one, a
+	// transcription session working through a folder of takes leaks one per file for the
+	// page's lifetime (the URL keeps the File handle alive). Guarded by `audioFile` the same
+	// way the <audio> below is, so this never runs during prerender (no File/URL.createObjectURL
+	// server-side) — the file is always undefined there.
+	let audioUrl: string | undefined;
+	$: if (audioFile) {
+		const nextUrl = URL.createObjectURL(audioFile);
+		if (audioUrl) URL.revokeObjectURL(audioUrl);
+		audioUrl = nextUrl;
+	} else if (audioUrl) {
+		URL.revokeObjectURL(audioUrl);
+		audioUrl = undefined;
+	}
+	onMount(() => () => {
+		if (audioUrl) URL.revokeObjectURL(audioUrl);
+	});
+
 	export let playbackRate: number = 1,
 		paused: boolean = true,
 		volume: number = 1,
@@ -94,7 +112,17 @@
 								raw: undefined
 							};
 						})()
-					: await computeBasicPitch(samples, `${base}/basic-pitch-model/model.json`, duration);
+					: await computeBasicPitch(
+							samples,
+							`${base}/basic-pitch-model/model.json`,
+							duration,
+							(partial) => {
+								// stale by the time it arrives (file/analyzer changed mid-analysis) — drop it,
+								// the in-flight computePitch call for the new selection owns the dispatch now
+								if (file === audioFile && chosenAnalyzer === analyzer)
+									pitchDispatch('pitch', { status: 'computing', partial });
+							}
+						);
 			if (file !== audioFile) return;
 
 			const entry: PitchEventDetail & { status: 'done' } = {
@@ -106,9 +134,13 @@
 			pitchCache.set(chosenAnalyzer, entry);
 			pitchStatus = 'idle';
 			if (chosenAnalyzer === analyzer) pitchDispatch('pitch', entry);
-		} catch {
-			if (file === audioFile) pitchCache.set(chosenAnalyzer, { status: 'error' });
+		} catch (err) {
+			console.error('pitch analysis failed', err);
 			pitchStatus = 'idle';
+			// deliberately not cached as an 'error' entry — a transient failure (offline, a
+			// flaky model fetch) would otherwise latch forever, since the cache is only
+			// cleared when the file itself changes; leaving it uncached means reopening the
+			// pitchgram naturally retries instead of replaying the same stale failure
 			if (file === audioFile && chosenAnalyzer === analyzer)
 				pitchDispatch('pitch', { status: 'error' });
 		}
@@ -125,17 +157,23 @@
 	/>
 </div>
 <!-- Source -->
-{#if audioFile}
+{#if audioFile && audioUrl}
 	<div class="mt-3 flex justify-center">
+		<!-- blur on play/pause: the app's own transport already duplicates every control here
+		     (play/pause, seek, speed) except volume/mute, so this stays for that — but a
+		     focused native control also gives Space its own play/pause handling, which would
+		     otherwise double-toggle against the app's global Space shortcut. -->
 		<audio
 			controls
-			src={URL.createObjectURL(audioFile)}
+			src={audioUrl}
 			bind:playbackRate
 			bind:currentTime={time}
 			bind:paused
 			bind:volume
 			bind:muted
 			bind:duration
+			on:play={(e) => e.currentTarget.blur()}
+			on:pause={(e) => e.currentTarget.blur()}
 			class="w-full"
 		></audio>
 	</div>

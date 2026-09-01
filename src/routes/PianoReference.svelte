@@ -302,8 +302,15 @@
 					><Icon name="chevron-left" class="h-4 w-4 rotate-180" /></button
 				>
 			</div>
+			<p id="piano-reference-keymap" class="sr-only">
+				Type A, S, D, F, G, H, J, K, L, or semicolon to play the white keys, and W, E, T, Y, U, O,
+				or P to play the black keys in between, rooted at the octave currently shown.
+			</p>
 			<!-- tabindex + keydown/keyup here is intentional: role="application" is the WAI-ARIA
-			     pattern for a custom keyboard-driven widget (musical typing), not a document region -->
+			     pattern for a custom keyboard-driven widget (musical typing), not a document region.
+			     aria-describedby points at the visually-hidden paragraph below, which spells out the
+			     QWERTY mapping application mode otherwise hides from screen-reader users entirely
+			     (every key gets forwarded to this widget instead of being announced normally). -->
 			<div
 				class="mt-3 h-32 touch-pan-x overflow-x-auto rounded-xs outline-none [scrollbar-width:none] focus-visible:ring-2 focus-visible:ring-amber-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900 [&::-webkit-scrollbar]:hidden"
 				bind:this={scrollEl}
@@ -312,6 +319,7 @@
 				role="application"
 				tabindex="0"
 				aria-label="Piano keyboard reference — click or tab here, then type to play notes"
+				aria-describedby="piano-reference-keymap"
 				on:pointerdown={onPointerDown}
 				on:pointermove={onPointerMove}
 				on:pointerup={onPointerUp}

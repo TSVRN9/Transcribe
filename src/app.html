@@ -22,8 +22,12 @@
 		data-sveltekit-preload-data="hover"
 		class="bg-stone-950 text-stone-100 min-h-screen antialiased"
 	>
-		<main>
-			<div style="display: contents">%sveltekit.body%</div>
-		</main>
+		<!-- no <main> wrapper here — the route itself provides one (+page.svelte); a second one
+		     around the page body was an invalid nested landmark every route inherited, including
+		     ones (like share-target) that don't render their own. Do not write the literal
+		     sveltekit-body placeholder token inside this comment — SvelteKit's template
+		     processing does a raw string substitution over the whole file, comments included,
+		     and will splice real page HTML into the middle of it. -->
+		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

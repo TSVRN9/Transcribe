@@ -8,7 +8,7 @@
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"lint": "prettier --check . && eslint .",
+		"lint": "prettier --check . ; e1=$?; eslint . ; e2=$?; test \"$e1\" = 0 && test \"$e2\" = 0",
 		"bench": "node scripts/bench-pitchgram.js",
 		"format": "prettier --write .",
 		"deploy": "gh-pages -d build -t"

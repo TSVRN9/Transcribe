@@ -317,6 +317,7 @@ export function mixToMono(buffer: AudioBuffer): Float32Array {
 // used directly for line-picking instead of the harmonic-summation salience heuristic.
 const CONTOUR_BINS_PER_SEMITONE = 3;
 const CONTOUR_BASE_MIDI = 21; // basic-pitch's contour/frame grid starts at MIDI 21 (A0)
+const PIANO_SEMITONE_COUNT = 88; // basic-pitch's "frames" output width — one bin per piano key, A0..C8
 const RENDER_BASE_MIDI = 12 * OCTAVE_START + 12; // MIDI of bin 0 in our render grid (C2)
 
 // basic-pitch analyzes audio in overlapping ~2s windows and concatenates each window's
@@ -357,19 +358,42 @@ if (import.meta.env?.DEV) {
 	);
 }
 
+// Named once, referenced everywhere this shape crosses a boundary (audio.ts, +page.svelte,
+// PitchgramView.svelte, segment.worker.ts) instead of repeating the literal object type —
+// a mismatch after an edit here surfaces as a type error at the call site instead of a
+// structured-clone shape mismatch inside the worker.
+//
+// ponytail: kept as number[][] rather than Float32Array[] despite the real ~4x memory cost
+// (a 10-minute clip holds ~215MB of this across its retained copies) — basic-pitch's own
+// vendored `outputToNotesPoly` (segment.worker.ts) is typed to require number[][], and
+// switching would mean an unverified `as number[][]` cast at that worker boundary with no
+// way to browser-test it in this environment. Revisit if a long-clip session's memory use
+// becomes a real complaint — the conversion point would be here and in computeBasicPitch's
+// `raw` construction below.
+export interface RawModelOutput {
+	frames: number[][];
+	onsets: number[][];
+}
+
 export interface BasicPitchResult {
 	result: PitchgramResult;
 	lines: PitchLines;
-	raw: { frames: number[][]; onsets: number[][] };
+	raw: RawModelOutput;
 }
 
-// module-level singleton: model weights (~900KB) are fetched once per session, not per file
+// module-level singleton: model weights (~900KB) are fetched once per session, not per file.
+// A rejected import (offline, transient 502) must NOT stay cached — without clearing it here,
+// every later attempt for the rest of the session would fail instantly and identically even
+// after connectivity returns.
 let basicPitchPromise: Promise<import('@spotify/basic-pitch').BasicPitch> | undefined;
 function getBasicPitch(modelUrl: string) {
 	if (!basicPitchPromise) {
-		basicPitchPromise = import('@spotify/basic-pitch').then(
-			({ BasicPitch }) => new BasicPitch(modelUrl)
-		);
+		basicPitchPromise = import('@spotify/basic-pitch')
+			.then(({ BasicPitch }) => new BasicPitch(modelUrl))
+			.catch((err) => {
+				basicPitchPromise = undefined;
+				throw err;
+			});
 	}
 	return basicPitchPromise;
 }
@@ -409,12 +433,42 @@ function maxPoolRows(rows: number[][], targetCount: number, durationSeconds: num
 	return out;
 }
 
+// Shared by the final result and computeBasicPitch's onProgress callback below: pools +
+// normalizes whatever's been accumulated so far against the clip's full duration, so a
+// partial call mid-analysis produces a genuine prefix of the eventual result rather than
+// something that has to be reshaped again later (see maxPoolRows' "past the model's last
+// real frame" comment — buckets with no data yet just come back zero, not fabricated).
+function shapePitchResult(
+	frameRows: number[][],
+	contourRows: number[][],
+	effectiveDuration: number
+): { result: PitchgramResult; lines: PitchLines } {
+	const pooledFrames = maxPoolRows(frameRows, TARGET_FRAMES, effectiveDuration);
+	const pooledContours = maxPoolRows(contourRows, TARGET_FRAMES, effectiveDuration);
+
+	const totalBins = OCTAVE_COUNT * BINS_PER_OCTAVE;
+	const contourLo = (RENDER_BASE_MIDI - CONTOUR_BASE_MIDI) * CONTOUR_BINS_PER_SEMITONE;
+	const slices = pooledContours.map((row) => row.slice(contourLo, contourLo + totalBins));
+
+	// contour values are sigmoid probabilities that rarely approach 1 even for confident
+	// pitches, so rescale against the clip's own peak (not a fixed 0..1 range) — same
+	// "loudest bin becomes full brightness" idea the old dB normalization used above.
+	let globalMax = 1e-6;
+	for (const row of slices) for (const v of row) if (v > globalMax) globalMax = v;
+	const frames = slices.map((row) => Float32Array.from(row, (v) => v / globalMax));
+
+	return { result: { frames, totalBins }, lines: extractLinesFromNoteFrames(pooledFrames) };
+}
+
 function extractLinesFromNoteFrames(noteFrames: number[][]): PitchLines {
 	const result = {} as PitchLines;
 	for (const key of Object.keys(BAND_OCTAVES) as (keyof PitchLines)[]) {
 		const [loOct, hiOct] = BAND_OCTAVES[key];
 		const loIdx = 12 * (OCTAVE_START + loOct) + 12 - CONTOUR_BASE_MIDI;
-		const hiIdx = Math.min(88, 12 * (OCTAVE_START + hiOct) + 12 - CONTOUR_BASE_MIDI);
+		const hiIdx = Math.min(
+			PIANO_SEMITONE_COUNT,
+			12 * (OCTAVE_START + hiOct) + 12 - CONTOUR_BASE_MIDI
+		);
 		const raw = noteFrames.map((row): LinePoint | null => {
 			let bestIdx: number | null = null;
 			let bestScore = LINE_THRESHOLD;
@@ -436,6 +490,12 @@ function extractLinesFromNoteFrames(noteFrames: number[][]): PitchLines {
 	return result;
 }
 
+// ponytail: fixed cadence (every Nth analysis window), not adaptive to clip length or fps —
+// trades "how fresh the partial preview is" for compute, since shapePitchResult's cost grows
+// with how much has accumulated so far and this runs on the main thread. Revisit (e.g. throttle
+// by elapsed wall-clock instead) if profiling ever shows this callback itself is the bottleneck.
+const PROGRESS_EVERY_N_WINDOWS = 3;
+
 /**
  * Runs basic-pitch inference on 22050Hz mono audio and reshapes its output into the same
  * PitchgramResult/PitchLines shapes the view already renders — no UI changes needed.
@@ -451,19 +511,29 @@ export async function computeBasicPitch(
 	// duration too — bucketing against a different duration here would silently drift the
 	// heatmap out of sync with playback, worse the further into the clip you go. Falls back
 	// to the decoded-sample estimate only if the caller doesn't have a real duration yet.
-	durationSeconds?: number
+	durationSeconds?: number,
+	// Optional: fired every few analysis windows (~5s of audio) with whatever's pooled so far,
+	// so the caller can render a partial pitchgram instead of blocking on a spinner for the
+	// whole clip — basic-pitch already streams results this way, this just doesn't throw them
+	// away until the end.
+	onProgress?: (partial: { result: PitchgramResult; lines: PitchLines }) => void
 ): Promise<BasicPitchResult> {
 	const model = await getBasicPitch(modelUrl);
 
 	const frameRows: number[][] = [];
 	const contourRows: number[][] = [];
 	const onsetRows: number[][] = [];
+	const effectiveDuration = durationSeconds || samples.length / NATIVE_SAMPLE_RATE;
+	let windowCount = 0;
 	await model.evaluateModel(
 		samples,
 		(frames, onsets, contours) => {
 			frameRows.push(...frames);
 			contourRows.push(...contours);
 			onsetRows.push(...onsets);
+			if (onProgress && ++windowCount % PROGRESS_EVERY_N_WINDOWS === 0) {
+				onProgress(shapePitchResult(frameRows, contourRows, effectiveDuration));
+			}
 		},
 		() => {}
 	);
@@ -474,24 +544,11 @@ export async function computeBasicPitch(
 			raw: { frames: [], onsets: [] }
 		};
 
-	const effectiveDuration = durationSeconds || samples.length / NATIVE_SAMPLE_RATE;
-	const pooledFrames = maxPoolRows(frameRows, TARGET_FRAMES, effectiveDuration);
-	const pooledContours = maxPoolRows(contourRows, TARGET_FRAMES, effectiveDuration);
-
-	const totalBins = OCTAVE_COUNT * BINS_PER_OCTAVE;
-	const contourLo = (RENDER_BASE_MIDI - CONTOUR_BASE_MIDI) * CONTOUR_BINS_PER_SEMITONE;
-	const slices = pooledContours.map((row) => row.slice(contourLo, contourLo + totalBins));
-
-	// contour values are sigmoid probabilities that rarely approach 1 even for confident
-	// pitches, so rescale against the clip's own peak (not a fixed 0..1 range) — same
-	// "loudest bin becomes full brightness" idea the old dB normalization used above.
-	let globalMax = 1e-6;
-	for (const row of slices) for (const v of row) if (v > globalMax) globalMax = v;
-	const frames = slices.map((row) => Float32Array.from(row, (v) => v / globalMax));
+	const { result, lines } = shapePitchResult(frameRows, contourRows, effectiveDuration);
 
 	return {
-		result: { frames, totalBins },
-		lines: extractLinesFromNoteFrames(pooledFrames),
+		result,
+		lines,
 		// native-fps (unpooled), kept so Notes mode can re-segment on a settings change
 		// (see segmentNotes below) without re-running the model
 		raw: { frames: frameRows, onsets: onsetRows }
@@ -532,21 +589,40 @@ export interface RenderedNote {
 // Lazily created (never at module scope) so it's never touched during the SSR/prerender pass.
 let segmentWorker: Worker | undefined;
 let segmentRequestSeq = 0;
-const segmentPending = new Map<number, (notes: RawNoteEvent[]) => void>();
-let lastRawSent: { frames: number[][]; onsets: number[][] } | undefined;
+const segmentPending = new Map<
+	number,
+	{ resolve: (notes: RawNoteEvent[]) => void; reject: (err: Error) => void }
+>();
+let lastRawSent: RawModelOutput | undefined;
+
+// A worker-side exception is reported per-request via a `type: 'error'` message (see
+// segment.worker.ts) and handled in onmessage below. This onerror is only the fallback for the
+// worker itself failing to load/run at all (e.g. the module script 404s) — in that case there's
+// no per-request response coming, so every pending call is rejected and the worker is torn down
+// so the next request builds a fresh one instead of hanging on a dead one forever.
+function failAllPending(message: string) {
+	for (const { reject } of segmentPending.values()) reject(new Error(message));
+	segmentPending.clear();
+}
 
 function getSegmentWorker(): Worker {
 	if (!segmentWorker) {
-		segmentWorker = new Worker(new URL('./segment.worker.ts', import.meta.url), {
+		const worker = new Worker(new URL('./segment.worker.ts', import.meta.url), {
 			type: 'module'
 		});
-		segmentWorker.onmessage = (e: MessageEvent<WorkerResponse>) => {
-			const resolve = segmentPending.get(e.data.id);
-			if (resolve) {
-				segmentPending.delete(e.data.id);
-				resolve(e.data.notes);
-			}
+		worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+			const pending = segmentPending.get(e.data.id);
+			if (!pending) return;
+			segmentPending.delete(e.data.id);
+			if (e.data.type === 'error') pending.reject(new Error(e.data.message));
+			else pending.resolve(e.data.notes);
 		};
+		worker.onerror = (e: ErrorEvent) => {
+			failAllPending(e.message || 'segment worker failed');
+			segmentWorker = undefined;
+			lastRawSent = undefined;
+		};
+		segmentWorker = worker;
 	}
 	return segmentWorker;
 }
@@ -561,7 +637,7 @@ function getSegmentWorker(): Worker {
  * `raw` object triggers the (multi-MB) transfer — a settings-only change just sends the settings.
  */
 async function getSegmentedNotes(
-	raw: { frames: number[][]; onsets: number[][] },
+	raw: RawModelOutput,
 	settings: NoteSegmentSettings
 ): Promise<RawNoteEvent[]> {
 	if (raw.frames.length === 0) return [];
@@ -571,8 +647,8 @@ async function getSegmentedNotes(
 		lastRawSent = raw;
 	}
 	const id = ++segmentRequestSeq;
-	return new Promise<RawNoteEvent[]>((resolve) => {
-		segmentPending.set(id, resolve);
+	return new Promise<RawNoteEvent[]>((resolve, reject) => {
+		segmentPending.set(id, { resolve, reject });
 		worker.postMessage({ type: 'segment', id, settings } satisfies WorkerRequest);
 	});
 }
@@ -590,7 +666,7 @@ function toRenderedNotes(notes: RawNoteEvent[]): RenderedNote[] {
 }
 
 export async function segmentNotes(
-	raw: { frames: number[][]; onsets: number[][] },
+	raw: RawModelOutput,
 	settings: NoteSegmentSettings
 ): Promise<RenderedNote[]> {
 	return toRenderedNotes(await getSegmentedNotes(raw, settings));
@@ -688,7 +764,7 @@ export function groupIntoVoices(notes: RawNoteEvent[], maxVoices = MAX_VOICES): 
 }
 
 export async function segmentVoices(
-	raw: { frames: number[][]; onsets: number[][] },
+	raw: RawModelOutput,
 	settings: NoteSegmentSettings,
 	maxVoices = MAX_VOICES
 ): Promise<RenderedNote[][]> {

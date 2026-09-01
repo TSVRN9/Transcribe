@@ -17,6 +17,11 @@
 				sharedFile.set(new File([blob], name, { type: blob.type }));
 				await cache.delete(SHARE_CACHE_KEY);
 			}
+		} catch (err) {
+			// caches.open can reject (e.g. Safari private browsing has no Cache API) — the
+			// `finally` below still gets the user back to the app either way, this just stops
+			// the rejection from escaping onMount as an unhandled promise rejection
+			console.error('failed to read shared file', err);
 		} finally {
 			goto(resolve('/'), { replaceState: true });
 		}

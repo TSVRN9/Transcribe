@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { fade, fly } from 'svelte/transition';
-	import type { LinePoint, PitchLines, RenderedNote } from './pitchgram';
+	import type { LinePoint, PitchLines, RawModelOutput, RenderedNote } from './pitchgram';
 	import {
 		OCTAVE_START,
 		OCTAVE_COUNT,
@@ -13,6 +15,7 @@
 	} from './pitchgram';
 	import type { PitchStatus, PitchAnalyzer } from './audio';
 	import { placeholderSeek, type SeekFunction } from './audio';
+	import type { Behavior } from './behavior';
 	import { secondsToTime, gridBtn, primaryBtn, iconSize } from './utils';
 	import Icon from './Icon.svelte';
 	import PianoReference from './PianoReference.svelte';
@@ -20,7 +23,7 @@
 	export let status: PitchStatus = 'idle';
 	export let frames: Float32Array[] | undefined = undefined;
 	export let lines: PitchLines | undefined = undefined;
-	export let raw: { frames: number[][]; onsets: number[][] } | undefined = undefined;
+	export let raw: RawModelOutput | undefined = undefined;
 	export let analyzer: PitchAnalyzer = 'neural';
 	export let currentTime = 0;
 	export let flag = 0;
@@ -28,18 +31,12 @@
 	export let seek: SeekFunction = placeholderSeek;
 
 	// mobile widget: playback state/behaviors owned by the parent, this view just calls them
+	// through the same `behavior` map +page.svelte builds — one prop instead of one per
+	// behavior, so a new Behavior doesn't also mean a new prop here and in every call site below
 	export let paused = true;
 	export let playbackRate = 1;
-	export let togglePlayback: VoidFunction;
-	export let jumpBack: VoidFunction;
-	export let jumpForward: VoidFunction;
-	export let speedUp: VoidFunction;
-	export let slowDown: VoidFunction;
+	export let behavior: Record<Behavior, VoidFunction>;
 	export let resetSpeed: VoidFunction;
-	export let placeFlag: VoidFunction;
-	export let pushFlagBack: VoidFunction;
-	export let resetFlag: VoidFunction;
-	export let rewind: VoidFunction;
 	export let onClose: VoidFunction;
 
 	// mobile "screens": pitchgram takes the whole viewport on a phone (see the fixed-inset
@@ -215,21 +212,29 @@
 
 	let notes: RenderedNote[] = [];
 	let notesComputing = false;
+	let notesError = false;
 	let notesRequestId = 0;
 	$: if (viewMode === 'notes' && raw) {
 		const requestId = ++notesRequestId;
 		notesComputing = true;
-		segmentNotes(raw, { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick }).then(
-			(result) => {
+		notesError = false;
+		segmentNotes(raw, { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick })
+			.then((result) => {
 				if (requestId === notesRequestId) {
 					notes = result;
 					notesComputing = false;
 				}
-			}
-		);
+			})
+			.catch(() => {
+				if (requestId === notesRequestId) {
+					notesComputing = false;
+					notesError = true;
+				}
+			});
 	} else {
 		notes = [];
 		notesComputing = false;
+		notesError = false;
 	}
 
 	// Voices mode: same segmentation, then grouped into monophonic streams (see groupIntoVoices
@@ -237,21 +242,29 @@
 	const VOICE_COLORS = ['#fb923c', '#a78bfa', '#22d3ee', '#f472b6'];
 	let voiceStreams: RenderedNote[][] = [];
 	let voicesComputing = false;
+	let voicesError = false;
 	let voicesRequestId = 0;
 	$: if (viewMode === 'voices' && raw) {
 		const requestId = ++voicesRequestId;
 		voicesComputing = true;
-		segmentVoices(raw, { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick }).then(
-			(result) => {
+		voicesError = false;
+		segmentVoices(raw, { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick })
+			.then((result) => {
 				if (requestId === voicesRequestId) {
 					voiceStreams = result;
 					voicesComputing = false;
 				}
-			}
-		);
+			})
+			.catch(() => {
+				if (requestId === voicesRequestId) {
+					voicesComputing = false;
+					voicesError = true;
+				}
+			});
 	} else {
 		voiceStreams = [];
 		voicesComputing = false;
+		voicesError = false;
 	}
 
 	// horizontal (time) zoom: px per frame column, auto-fit to the container once on load.
@@ -311,7 +324,14 @@
 			if (scrollEl) scrollEl.scrollTop = topRow * scaleY;
 		});
 	}
-	$: if (frames && containerHeight) {
+	// Gated on status !== 'computing' (unlike the x-fit above, which is safe to latch
+	// immediately since it only depends on frames.length — always the fixed pooled column
+	// count, partial or final): fitVerticalZoom scans actual bin *content* for what's
+	// occupied, and a partial result (see computeBasicPitch's onProgress in pitchgram.ts) is
+	// only ever a prefix of the real clip. Fitting to that early would auto-zoom to whatever
+	// pitch range the first few seconds happened to use and then never re-fit once the rest
+	// of a longer clip's range comes in.
+	$: if (frames && containerHeight && status !== 'computing') {
 		if (!fittedY) {
 			fitVerticalZoom(frames);
 			fittedY = true;
@@ -321,11 +341,39 @@
 	}
 	$: if (!frames) fittedY = false;
 
-	function zoomBy(factor: number) {
-		scale = Math.max(minScale, Math.min(MAX_SCALE, scale * factor));
+	// zooming keeps whatever content was under (clientX, clientY) fixed on screen — defaults to
+	// the viewport center for the toolbar +/- buttons, which have no cursor position of their own
+	function zoomBy(factor: number, clientX?: number) {
+		const oldScale = scale;
+		const newScale = Math.max(minScale, Math.min(MAX_SCALE, scale * factor));
+		if (newScale === oldScale || !scrollEl) {
+			scale = newScale;
+			return;
+		}
+		const rect = scrollEl.getBoundingClientRect();
+		const offsetX = (clientX ?? rect.left + rect.width / 2) - rect.left;
+		const contentX = scrollEl.scrollLeft + offsetX;
+		scale = newScale;
+		tick().then(() => {
+			if (!scrollEl) return;
+			scrollEl.scrollLeft = (contentX * newScale) / oldScale - offsetX;
+		});
 	}
-	function zoomYBy(factor: number) {
-		scaleY = Math.max(minScaleY, Math.min(MAX_SCALE_Y, scaleY * factor));
+	function zoomYBy(factor: number, clientY?: number) {
+		const oldScaleY = scaleY;
+		const newScaleY = Math.max(minScaleY, Math.min(MAX_SCALE_Y, scaleY * factor));
+		if (newScaleY === oldScaleY || !scrollEl) {
+			scaleY = newScaleY;
+			return;
+		}
+		const rect = scrollEl.getBoundingClientRect();
+		const offsetY = (clientY ?? rect.top + rect.height / 2) - rect.top;
+		const contentY = scrollEl.scrollTop + offsetY;
+		scaleY = newScaleY;
+		tick().then(() => {
+			if (!scrollEl) return;
+			scrollEl.scrollTop = (contentY * newScaleY) / oldScaleY - offsetY;
+		});
 	}
 
 	let scrollEl: HTMLDivElement;
@@ -339,7 +387,7 @@
 	function onWheel(e: WheelEvent) {
 		if (e.ctrlKey) {
 			e.preventDefault();
-			zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+			zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX);
 			return;
 		}
 		e.preventDefault();
@@ -352,7 +400,7 @@
 	}
 
 	function onGutterWheel(e: WheelEvent) {
-		zoomYBy(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+		zoomYBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientY);
 	}
 
 	$: canvasWidthPx = frames ? frames.length * scale : 0;
@@ -375,7 +423,10 @@
 
 	// click-drag pans (grab-and-drag, content sticks to the cursor); a plain click with no
 	// movement still seeks, same as before — distinguished by movement past a small threshold
-	// so a slightly-shaky click doesn't get misread as a pan
+	// so a slightly-shaky click doesn't get misread as a pan. A second touch upgrades the
+	// gesture to a pinch: finger-distance change zooms both axes, the moving midpoint keeps
+	// whatever content was between the fingers fixed on screen — same anchor math as the
+	// mouse-wheel zoom, recomputed from the pinch's start state each move so it can't drift.
 	let dragging = false;
 	let dragMoved = false;
 	let dragStartX = 0;
@@ -384,17 +435,56 @@
 	let dragStartScrollTop = 0;
 	const DRAG_THRESHOLD = 4; // px
 
+	let pointers = new SvelteMap<number, { x: number; y: number }>();
+	let pinching = false;
+	let pinchStartDist = 1;
+	let pinchStartScale = 1;
+	let pinchStartScaleY = 1;
+	let pinchStartContentX = 0;
+	let pinchStartContentY = 0;
+
 	function onPointerDown(e: PointerEvent) {
+		canvasEl.setPointerCapture(e.pointerId);
+		pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		if (pointers.size === 2) {
+			dragging = false;
+			pinching = true;
+			followEnabled = false;
+			const [a, b] = [...pointers.values()];
+			pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+			pinchStartScale = scale;
+			pinchStartScaleY = scaleY;
+			const rect = scrollEl.getBoundingClientRect();
+			pinchStartContentX = scrollEl.scrollLeft + ((a.x + b.x) / 2 - rect.left);
+			pinchStartContentY = scrollEl.scrollTop + ((a.y + b.y) / 2 - rect.top);
+			return;
+		}
 		dragging = true;
 		dragMoved = false;
 		dragStartX = e.clientX;
 		dragStartY = e.clientY;
 		dragStartScrollLeft = scrollEl.scrollLeft;
 		dragStartScrollTop = scrollEl.scrollTop;
-		canvasEl.setPointerCapture(e.pointerId);
 	}
 
 	function onPointerMove(e: PointerEvent) {
+		if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		if (pinching && pointers.size === 2) {
+			const [a, b] = [...pointers.values()];
+			const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+			const factor = dist / pinchStartDist;
+			scale = Math.max(minScale, Math.min(MAX_SCALE, pinchStartScale * factor));
+			scaleY = Math.max(minScaleY, Math.min(MAX_SCALE_Y, pinchStartScaleY * factor));
+			const midX = (a.x + b.x) / 2;
+			const midY = (a.y + b.y) / 2;
+			tick().then(() => {
+				if (!scrollEl) return;
+				const rect = scrollEl.getBoundingClientRect();
+				scrollEl.scrollLeft = (pinchStartContentX * scale) / pinchStartScale - (midX - rect.left);
+				scrollEl.scrollTop = (pinchStartContentY * scaleY) / pinchStartScaleY - (midY - rect.top);
+			});
+			return;
+		}
 		if (!dragging) return;
 		const dx = e.clientX - dragStartX;
 		const dy = e.clientY - dragStartY;
@@ -407,7 +497,15 @@
 	}
 
 	function onPointerUp(e: PointerEvent) {
+		pointers.delete(e.pointerId);
+		if (pointers.size < 2) pinching = false;
 		if (dragging && !dragMoved) seekFromEvent(e);
+		dragging = false;
+	}
+
+	function onPointerCancel(e: PointerEvent) {
+		pointers.delete(e.pointerId);
+		pinching = pointers.size >= 2;
 		dragging = false;
 	}
 
@@ -425,6 +523,28 @@
 	}
 	function onRulerPointerUp() {
 		scrubbing = false;
+	}
+
+	// keyboard equivalent for the ruler's own role="slider" — without this, arrow/Home/End
+	// only seemed to work here because +page.svelte's global shortcut handler leaked through
+	// (jumpBack/jumpForward/goToStart/goToEnd); narrowing that handler's guard removed the
+	// accident, so the ruler needs its own handling to stay keyboard-operable (WCAG 2.1.1).
+	const RULER_SEEK_STEP = 5; // seconds per arrow press, same as +page.svelte's jumpBack/jumpForward
+	function onRulerKeyDown(e: KeyboardEvent) {
+		if (!duration) return;
+		if (e.key === 'ArrowLeft') seek(Math.max(0, currentTime - RULER_SEEK_STEP));
+		else if (e.key === 'ArrowRight') seek(Math.min(duration, currentTime + RULER_SEEK_STEP));
+		else if (e.key === 'Home') seek(0);
+		else if (e.key === 'End') seek(duration);
+		else return;
+		e.preventDefault();
+		// this div isn't an input/select/summary, so +page.svelte's global shortcut guard
+		// doesn't exempt it — without stopPropagation, the same keydown bubbles to the
+		// document listener too and double-seeks (its own jumpBack/jumpForward on the same
+		// keys, applied to the same pre-update `currentTime`). Same fix PianoReference.svelte
+		// already uses for its own note keys, for the same reason.
+		e.stopPropagation();
+		followEnabled = false;
 	}
 
 	function seekFromEvent(e: PointerEvent) {
@@ -487,40 +607,36 @@
 		<div class="flex items-center gap-1.5">
 			<span class="hidden text-stone-500 sm:inline">time</span>
 			<button
-				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
+				class="{gridBtn} h-11 w-11"
 				on:click={() => zoomBy(1 / 1.5)}
-				aria-label="Zoom time out">−</button
+				aria-label="Zoom time out"><Icon name="minus" class="h-5 w-5" /></button
 			>
-			<button
-				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
-				on:click={() => zoomBy(1.5)}
-				aria-label="Zoom time in">+</button
+			<button class="{gridBtn} h-11 w-11" on:click={() => zoomBy(1.5)} aria-label="Zoom time in"
+				><Icon name="plus" class="h-5 w-5" /></button
 			>
 			<span class="hidden text-stone-500 sm:inline">pitch</span>
 			<button
-				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
+				class="{gridBtn} h-11 w-11"
 				on:click={() => zoomYBy(1 / 1.5)}
-				aria-label="Zoom pitch out">−</button
+				aria-label="Zoom pitch out"><Icon name="minus" class="h-5 w-5" /></button
+			>
+			<button class="{gridBtn} h-11 w-11" on:click={() => zoomYBy(1.5)} aria-label="Zoom pitch in"
+				><Icon name="plus" class="h-5 w-5" /></button
 			>
 			<button
-				class="flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
-				on:click={() => zoomYBy(1.5)}
-				aria-label="Zoom pitch in">+</button
-			>
-			<button
-				class="ml-1 flex h-9 w-9 items-center justify-center rounded-sm border border-stone-600 hover:bg-stone-700"
+				class="{gridBtn} ml-1 h-11 w-11"
 				on:click={() => {
 					followEnabled = true;
 					followPlayhead(currentTime);
 				}}
 				title="Jump to playhead"
-				aria-label="Jump to playhead"><Icon name="viewfinder-circle" class="h-4 w-4" /></button
+				aria-label="Jump to playhead"><Icon name="viewfinder-circle" class="h-5 w-5" /></button
 			>
 			<button
-				class="ml-1 flex h-9 items-center justify-center gap-1 rounded-sm border border-stone-600 px-2.5 hover:bg-stone-700"
+				class="{gridBtn} ml-2 h-11 w-11"
 				on:click={onClose}
-				aria-label="Close pitchgram"
-				><Icon name="x-mark" class="h-4 w-4" /> <span class="hidden sm:inline">Close</span></button
+				title="Close"
+				aria-label="Close pitchgram"><Icon name="x-mark" class="h-5 w-5" /></button
 			>
 		</div>
 	</div>
@@ -553,6 +669,7 @@
 					max="1"
 					step="0.05"
 					bind:value={confidenceThreshold}
+					on:pointerup={(e) => e.currentTarget.blur()}
 					class="w-16 accent-amber-500"
 				/>
 				<span class="w-9 font-mono text-stone-400">{Math.round(confidenceThreshold * 100)}%</span>
@@ -579,6 +696,7 @@
 						step="0.05"
 						value={onsetThresh}
 						on:change={(e) => (onsetThresh = e.currentTarget.valueAsNumber)}
+						on:pointerup={(e) => e.currentTarget.blur()}
 						class="w-20 accent-amber-500"
 					/>
 					<span class="w-9 font-mono text-stone-400">{Math.round(onsetThresh * 100)}%</span>
@@ -592,6 +710,7 @@
 						step="0.05"
 						value={frameThresh}
 						on:change={(e) => (frameThresh = e.currentTarget.valueAsNumber)}
+						on:pointerup={(e) => e.currentTarget.blur()}
 						class="w-20 accent-amber-500"
 					/>
 					<span class="w-9 font-mono text-stone-400">{Math.round(frameThresh * 100)}%</span>
@@ -605,6 +724,7 @@
 						step="1"
 						value={minNoteLen}
 						on:change={(e) => (minNoteLen = e.currentTarget.valueAsNumber)}
+						on:pointerup={(e) => e.currentTarget.blur()}
 						class="w-20 accent-amber-500"
 					/>
 					<span class="w-9 font-mono text-stone-400">{minNoteLen}f</span>
@@ -623,12 +743,14 @@
 				</label>
 				{#if notesComputing || voicesComputing}
 					<span class="text-stone-500">Computing notes…</span>
+				{:else if notesError || voicesError}
+					<span class="text-red-400">Couldn't compute notes — try different settings.</span>
 				{/if}
 			</div>
 		</details>
 	{/if}
 
-	{#if status === 'computing'}
+	{#if status === 'computing' && !frames}
 		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-stone-400">
 			<div
 				class="h-8 w-8 animate-spin rounded-full border-2 border-stone-700 border-t-amber-400"
@@ -643,21 +765,35 @@
 		</p>
 	{:else if frames}
 		<div
-			class="relative min-h-0 min-w-0 flex-1 overflow-auto rounded-sm bg-stone-800 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+			class="relative min-h-0 min-w-0 flex-1 touch-none overflow-auto overscroll-contain rounded-sm bg-stone-800 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			bind:this={scrollEl}
 			bind:clientWidth={containerWidth}
 			bind:clientHeight={containerHeight}
 			on:wheel={onWheel}
 		>
+			{#if status === 'computing'}
+				<div
+					class="pointer-events-none sticky top-1 z-20 float-right mr-1 flex w-fit items-center gap-1.5 rounded-full bg-stone-950/80 px-2 py-1 text-[11px] text-stone-300"
+					role="status"
+				>
+					<div
+						class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-stone-600 border-t-amber-400"
+					></div>
+					Still analyzing…
+				</div>
+			{/if}
 			<div class="relative" style="width: {canvasWidthPx}px; height: {canvasHeightPx}px">
 				<canvas
 					bind:this={canvasEl}
 					class="absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
 					style="image-rendering: pixelated; touch-action: none;"
+					aria-label="Pitchgram heatmap, {duration
+						? secondsToTime(duration)
+						: 'unknown length'} of analyzed audio. Drag to pan, or use the seek slider below to navigate by keyboard."
 					on:pointerdown={onPointerDown}
 					on:pointermove={onPointerMove}
 					on:pointerup={onPointerUp}
-					on:pointercancel={() => (dragging = false)}
+					on:pointercancel={onPointerCancel}
 				></canvas>
 				<div class="pointer-events-none absolute inset-0" style={gridStyle}></div>
 				<svg
@@ -762,18 +898,20 @@
 				style="width: {canvasWidthPx}px; touch-action: none;"
 				role="slider"
 				tabindex="0"
-				aria-label="Seek"
+				aria-label="Seek (pitchgram ruler)"
 				aria-valuemin={0}
 				aria-valuemax={duration}
 				aria-valuenow={currentTime}
+				on:keydown={onRulerKeyDown}
 				on:pointerdown={onRulerPointerDown}
 				on:pointermove={onRulerPointerMove}
 				on:pointerup={onRulerPointerUp}
 				on:pointercancel={onRulerPointerUp}
 			>
-				{#each ticks as tick (tick.t)}
-					<span class="absolute -translate-x-1/2 bg-stone-800/70 px-0.5" style="left: {tick.x}px"
-						>{secondsToTime(tick.t)}</span
+				{#each ticks as rulerTick (rulerTick.t)}
+					<span
+						class="absolute -translate-x-1/2 bg-stone-800/70 px-0.5"
+						style="left: {rulerTick.x}px">{secondsToTime(rulerTick.t)}</span
 					>
 				{/each}
 			</div>
@@ -788,17 +926,19 @@
 	     way back to speed/flag controls and the piano short of closing the view — see the
 	     mobileSheet comment above. Buttons are h-11 (44px) for a real touch target. -->
 	<div class="mt-2 flex items-center justify-center gap-2 lg:hidden">
-		<button class="{gridBtn} w-11 shrink-0" on:click={jumpBack} aria-label="Back 5 seconds"
+		<button class="{gridBtn} w-11 shrink-0" on:click={behavior.jumpBack} aria-label="Back 5 seconds"
 			><Icon name="backward" class={iconSize} /></button
 		>
 		<button
 			class="{primaryBtn} w-11 shrink-0"
-			on:click={togglePlayback}
+			on:click={behavior.togglePlayback}
 			aria-label={paused ? 'Play' : 'Pause'}
 			><Icon name={paused ? 'play' : 'pause'} class={iconSize} /></button
 		>
-		<button class="{gridBtn} w-11 shrink-0" on:click={jumpForward} aria-label="Forward 5 seconds"
-			><Icon name="forward" class={iconSize} /></button
+		<button
+			class="{gridBtn} w-11 shrink-0"
+			on:click={behavior.jumpForward}
+			aria-label="Forward 5 seconds"><Icon name="forward" class={iconSize} /></button
 		>
 		<button
 			class="{gridBtn} flex-1 gap-1.5 font-mono text-xs {mobileSheet === 'controls'
@@ -835,7 +975,7 @@
 			{#if mobileSheet === 'controls'}
 				<div class="flex flex-col gap-3">
 					<div class="grid grid-cols-3 gap-2">
-						<button class={gridBtn} on:click={slowDown} aria-label="Slow down"
+						<button class={gridBtn} on:click={behavior.slowDown} aria-label="Slow down"
 							><Icon name="minus" class={iconSize} /></button
 						>
 						<button
@@ -843,21 +983,21 @@
 							on:click={resetSpeed}
 							aria-label="Reset speed to 100%">{Math.round(playbackRate * 100)}%</button
 						>
-						<button class={gridBtn} on:click={speedUp} aria-label="Speed up"
+						<button class={gridBtn} on:click={behavior.speedUp} aria-label="Speed up"
 							><Icon name="plus" class={iconSize} /></button
 						>
 					</div>
 					<div class="grid grid-cols-4 gap-2">
-						<button class={gridBtn} on:click={rewind} aria-label="Go to flag"
+						<button class={gridBtn} on:click={behavior.rewind} aria-label="Go to flag"
 							><Icon name="flag" class="{iconSize} text-orange-400" /></button
 						>
-						<button class={gridBtn} on:click={pushFlagBack} aria-label="Push flag back 1s"
+						<button class={gridBtn} on:click={behavior.pushFlagBack} aria-label="Push flag back 1s"
 							><Icon name="chevron-left" class={iconSize} /></button
 						>
-						<button class={gridBtn} on:click={placeFlag} aria-label="Set flag"
+						<button class={gridBtn} on:click={behavior.placeFlag} aria-label="Set flag"
 							><Icon name="flag-solid" class="{iconSize} text-orange-400" /></button
 						>
-						<button class={gridBtn} on:click={resetFlag} aria-label="Reset flag"
+						<button class={gridBtn} on:click={behavior.resetFlag} aria-label="Reset flag"
 							><Icon name="x-mark" class={iconSize} /></button
 						>
 					</div>
