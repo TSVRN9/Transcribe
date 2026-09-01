@@ -409,10 +409,20 @@ function getBasicPitch(modelUrl: string) {
 // clip). That reads as "the playhead is behind the music": everything downstream (heatmap
 // columns, note rectangles) is drawn where the model's own frame count says it is, not where
 // it actually happened. Bucketing by nativeFrameToTime instead fixes both at the source.
-function maxPoolRows(rows: number[][], targetCount: number, durationSeconds: number): number[][] {
+// totalRowsEstimate defaults to rows.length — correct for a complete/final call, where rows
+// really is the whole clip's native-fps row count. A PARTIAL call (only the rows collected a few
+// windows into a long clip — see computeBasicPitch's onProgress) needs the eventual full-clip row
+// count here instead, or the partial preview pools to whatever narrow width has been analyzed so
+// far and never widens, instead of the final width with the not-yet-analyzed tail left at zero.
+function maxPoolRows(
+	rows: number[][],
+	targetCount: number,
+	durationSeconds: number,
+	totalRowsEstimate = rows.length
+): number[][] {
 	if (rows.length === 0) return rows;
 	const width = rows[0].length;
-	const count = Math.min(targetCount, rows.length);
+	const count = Math.min(targetCount, totalRowsEstimate);
 	const out: number[][] = new Array(count);
 	let frame = 0;
 	for (let c = 0; c < count; c++) {
@@ -443,8 +453,16 @@ function shapePitchResult(
 	contourRows: number[][],
 	effectiveDuration: number
 ): { result: PitchgramResult; lines: PitchLines } {
-	const pooledFrames = maxPoolRows(frameRows, TARGET_FRAMES, effectiveDuration);
-	const pooledContours = maxPoolRows(contourRows, TARGET_FRAMES, effectiveDuration);
+	// see maxPoolRows' totalRowsEstimate param — this is what makes a partial (mid-analysis)
+	// call pool to the eventual full-clip width instead of however many rows exist so far
+	const estimatedTotalRows = Math.round(effectiveDuration * NATIVE_FPS);
+	const pooledFrames = maxPoolRows(frameRows, TARGET_FRAMES, effectiveDuration, estimatedTotalRows);
+	const pooledContours = maxPoolRows(
+		contourRows,
+		TARGET_FRAMES,
+		effectiveDuration,
+		estimatedTotalRows
+	);
 
 	const totalBins = OCTAVE_COUNT * BINS_PER_OCTAVE;
 	const contourLo = (RENDER_BASE_MIDI - CONTOUR_BASE_MIDI) * CONTOUR_BINS_PER_SEMITONE;
