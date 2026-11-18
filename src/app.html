@@ -2,8 +2,12 @@
 <html lang="en">
 	<head>
 		<meta name="viewport" content="width=device-width,initial-scale=1" />
-		<meta name="description" content="Transcribe audio easier!" />
-		<meta name="theme-color" content="#020617" />
+		<meta
+			name="description"
+			content="Slow down, loop and see the pitches of any recording while you transcribe it."
+		/>
+		<meta name="theme-color" content="#f3f5f4" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#121821" media="(prefers-color-scheme: dark)" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta charset="utf-8" />
 		<title>Transcribe</title>
@@ -13,21 +17,13 @@
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 		<link
-			href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap"
+			href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&display=swap"
 			rel="stylesheet"
 		/>
 		%sveltekit.head%
 	</head>
-	<body
-		data-sveltekit-preload-data="hover"
-		class="bg-stone-950 text-stone-100 min-h-screen antialiased"
-	>
-		<!-- no <main> wrapper here — the route itself provides one (+page.svelte); a second one
-		     around the page body was an invalid nested landmark every route inherited, including
-		     ones (like share-target) that don't render their own. Do not write the literal
-		     sveltekit-body placeholder token inside this comment — SvelteKit's template
-		     processing does a raw string substitution over the whole file, comments included,
-		     and will splice real page HTML into the middle of it. -->
+	<body data-sveltekit-preload-data="hover" class="bg-paper text-ink min-h-screen antialiased">
+		<!-- never write the body placeholder token in a comment: SvelteKit substitutes it anywhere -->
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

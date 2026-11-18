@@ -5,8 +5,6 @@
 	import { OCTAVE_START, OCTAVE_COUNT } from './pitchgram';
 	import Icon from './Icon.svelte';
 
-	// expanded by default — this is the primary way to check pitch against a real key,
-	// not a buried extra, so it shouldn't start collapsed
 	let open = true;
 
 	const WHITE_NAMES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
@@ -14,9 +12,7 @@
 	const BLACK_NAMES = ['C#', 'D#', '', 'F#', 'G#', 'A#', '']; // '' = no black key after this white key (E, B)
 	const BLACK_SEMITONES = [1, 3, -1, 6, 8, 10, -1];
 
-	// full C2..B6 range in one horizontally-scrollable strip (fixed pixel key widths, not
-	// percentages, so scrolling reveals more keys instead of squeezing 5 octaves into one
-	// screen-width row) — matches the pitchgram's own C2..B6 render window, see PitchgramView.
+	// fixed key widths so the strip scrolls instead of squeezing 5 octaves
 	const TOTAL_WHITE = OCTAVE_COUNT * 7;
 	const KEY_WIDTH = 40; // px
 	const BLACK_WIDTH = KEY_WIDTH * 0.6;
@@ -49,16 +45,10 @@
 		};
 	}).filter((k) => k.name);
 
-	// created lazily on first key press, client-side only — this component's <script>
-	// also runs during the prerender/SSR pass, where AudioContext doesn't exist
+	// lazily, on first press: no AudioContext during prerender
 	let audioCtx: AudioContext | undefined;
 
-	// Rhodes-style electric piano tone, not a plucked string: a tine struck by a hammer
-	// rings close to a pure sine, so the fundamental dominates and sustains long instead of
-	// decaying fast. The characteristic "bell" comes from a strong 2nd harmonic that's
-	// brighter than the fundamental at the very start but fades much quicker, mellowing the
-	// note as it sustains. mult 7 is the pickup "bark" — a short, near-inharmonic click from
-	// the tine's initial strike against the pickup, gone within ~60ms.
+	// Rhodes-like: near-sine fundamental, fast-fading bright 2nd harmonic, short x7 pickup click
 	const HARMONICS = [
 		{ mult: 1, amp: 0.9, decay: 3.5 },
 		{ mult: 2, amp: 0.5, decay: 0.7 },
@@ -100,31 +90,14 @@
 		};
 	}
 
-	// pointerdown/pointerup (not click) so a note sounds the instant a key is pressed and
-	// stops the instant it's released, instead of waiting for a full click cycle and always
-	// playing the same fixed-length decay regardless of how long the key is held.
-	//
-	// Pointer capture + manual hit-testing (not per-button pointer handlers) so a press-and-
-	// slide plays a run of notes glissando-style, GarageBand-keyboard fashion: the pointer is
-	// captured once on the key first touched, so the browser keeps routing move/up events to
-	// this component instead of letting them fall through to native drag/text-selection as the
-	// cursor crosses sibling keys — which is what made dragging across the keyboard feel like
-	// it was dragging the page.
-	// id is a pointerId (pointer/touch) or a "kbd:<key>" string (computer keyboard) — two
-	// namespaces sharing one voice-management scheme, so touching and typing can both sound
-	// notes at once without either stepping on the other's state.
+	// pointer capture + manual hit-testing so press-and-slide plays a glissando.
+	// id is a pointerId or "kbd:<key>", so touch and typing can sound notes together
 	type NoteSourceId = number | string;
 	const activeVoices = new SvelteMap<NoteSourceId, { stop: VoidFunction }>();
 	const activeMidi = new SvelteMap<NoteSourceId, number>(); // source id -> currently sounding midi
 	const pressedMidis = new SvelteSet<number>(); // currently sounding midis, for key highlighting
 
-	// Hit-testing used to call document.elementFromPoint on every pointermove, which forces a
-	// synchronous layout on every call — during a fast glissando slide that's dozens of forced
-	// layouts a second, which is what made the keyboard feel laggy. Instead, measure every
-	// key's rect once when a gesture starts (cheap: one batched read, not one per move) and
-	// hit-test against those cached numbers for the rest of the gesture. Rects go stale if the
-	// strip is scrolled mid-gesture by a second touch — acceptable, glissando + simultaneous
-	// scroll-with-another-finger is not a real usage pattern here.
+	// key rects measured once per gesture: elementFromPoint on every move forced layout and lagged
 	let whiteRects: { midi: number; left: number; right: number }[] = [];
 	let blackRects: { midi: number; left: number; right: number; bottom: number }[] = [];
 
@@ -140,7 +113,7 @@
 	}
 
 	function keyAt(x: number, y: number): number | undefined {
-		// black keys render on top and only cover the strip's upper portion — check them first
+		// black keys sit on top, check them first
 		for (const k of blackRects) {
 			if (x >= k.left && x <= k.right && y <= k.bottom) return k.midi;
 		}
@@ -174,9 +147,7 @@
 		const midi = keyAt(e.clientX, e.clientY);
 		if (midi === undefined) return;
 		e.preventDefault();
-		// preventDefault above also suppresses the browser's normal click-to-focus behavior
-		// (since focusing is part of the default action it just cancelled) — focus explicitly
-		// so a mouse click "activates" computer-keyboard note input the same way tabbing in does
+		// preventDefault cancelled click-to-focus, so focus explicitly to enable typing
 		(e.currentTarget as HTMLElement).focus();
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		setActiveKey(e.pointerId, midi);
@@ -191,13 +162,7 @@
 		releaseKey(e.pointerId);
 	}
 
-	// Computer-keyboard input: classic "musical typing" layout (GarageBand/Ableton
-	// convention) — the home row plays white keys, the row above plays black keys, rooted at
-	// whatever octave is currently scrolled into view (octaveLabel below), so scrolling the
-	// strip re-tunes what your QWERTY keys play. Keydown starts the note immediately (not on
-	// some debounced/delayed trigger) for the same instant-response feel the pointer glissando
-	// has; keyup releases it. event.repeat is skipped so holding a key doesn't re-strike the
-	// note on every OS auto-repeat tick.
+	// musical typing: home row = white keys, row above = black, rooted at the visible octave
 	const KEY_MAP: Record<string, number> = {
 		a: 0,
 		w: 1,
@@ -218,10 +183,7 @@
 		';': 16
 	};
 
-	// stopPropagation on every mapped key so it never reaches +page's document-level transport
-	// shortcuts — 's' and 'f' are both note keys here and transport shortcuts (push flag back /
-	// set flag) elsewhere. Scoped to only fire while this element actually has focus (click or
-	// Tab to it), so typing normally everywhere else on the page is unaffected.
+	// keep 's'/'f' etc. from also firing the transport shortcuts
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
 		const offset = KEY_MAP[e.key.toLowerCase()];
@@ -236,24 +198,18 @@
 		e.stopPropagation();
 		releaseKey(`kbd:${e.key.toLowerCase()}`);
 	}
-	// releases any still-held computer-keyboard notes if focus leaves mid-press (alt-tab, click
-	// elsewhere) — otherwise a note could ring forever since its keyup would never arrive here
+	// release held notes on blur, or their keyup never arrives
 	function onBlur() {
 		for (const id of [...activeMidi.keys()]) {
 			if (typeof id === 'string' && id.startsWith('kbd:')) releaseKey(id);
 		}
 	}
 
-	// horizontal scroll: native touch/trackpad panning does the real work (touch-action:
-	// pan-x below, rather than the old two-octaves-at-a-time paging buttons); the ‹ › buttons
-	// just nudge by an octave for people who'd rather click. octaveLabel tracks scroll
-	// position so the readout stays meaningful while scrolling instead of going stale.
 	let scrollEl: HTMLDivElement;
 	let scrollLeft = 0;
 	let clientWidth = 0;
 	$: maxScroll = STRIP_WIDTH - clientWidth;
 	$: octaveLabel = OCTAVE_START + Math.round(scrollLeft / (7 * KEY_WIDTH));
-	// which on-screen key each QWERTY key currently plays, for the little letter badges below
 	$: keyLabelByMidi = new Map(
 		Object.entries(KEY_MAP).map(([key, offset]) => [midiOf(octaveLabel, offset), key.toUpperCase()])
 	);
@@ -263,20 +219,20 @@
 	}
 
 	onMount(() => {
-		// start centered around middle C, same starting point the old paged view had
+		// start around middle C
 		scrollEl.scrollLeft = (4 - OCTAVE_START) * 7 * KEY_WIDTH - clientWidth / 3;
 	});
 </script>
 
-<div class="rounded-md border border-stone-800 bg-stone-900 px-3 py-2">
+<div>
 	<button
 		type="button"
-		class="flex w-full items-center gap-2 py-1 text-sm font-medium text-stone-300"
+		class="flex w-full items-center gap-2 py-1 text-sm font-semibold text-graphite hover:text-ink"
 		on:click={() => (open = !open)}
 		aria-expanded={open}
 	>
-		<Icon name="musical-note" class="h-4 w-4 text-amber-500" />
-		Piano reference
+		<Icon name="musical-note" class="h-4 w-4" />
+		Piano
 		<Icon
 			name="chevron-left"
 			class="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 {open
@@ -286,16 +242,16 @@
 	</button>
 	{#if open}
 		<div transition:slide={{ duration: 200 }}>
-			<div class="mt-3 flex items-center justify-center gap-3 text-xs text-stone-400">
+			<div class="mt-3 flex items-center gap-3 text-sm text-graphite">
 				<button
-					class="rounded-sm border border-stone-600 p-2 hover:enabled:bg-stone-700 disabled:opacity-30"
+					class="rounded-md bg-wash p-2 text-ink hover:enabled:bg-wash-strong disabled:opacity-30"
 					on:click={() => nudgeOctave(-1)}
 					disabled={scrollLeft <= 0}
 					aria-label="Scroll down an octave"><Icon name="chevron-left" class="h-4 w-4" /></button
 				>
-				<span class="font-mono">C{octaveLabel}</span>
+				<span class="w-8 text-center font-semibold text-ink tabular-nums">C{octaveLabel}</span>
 				<button
-					class="rounded-sm border border-stone-600 p-2 hover:enabled:bg-stone-700 disabled:opacity-30"
+					class="rounded-md bg-wash p-2 text-ink hover:enabled:bg-wash-strong disabled:opacity-30"
 					on:click={() => nudgeOctave(1)}
 					disabled={scrollLeft >= maxScroll}
 					aria-label="Scroll up an octave"
@@ -306,13 +262,9 @@
 				Type A, S, D, F, G, H, J, K, L, or semicolon to play the white keys, and W, E, T, Y, U, O,
 				or P to play the black keys in between, rooted at the octave currently shown.
 			</p>
-			<!-- tabindex + keydown/keyup here is intentional: role="application" is the WAI-ARIA
-			     pattern for a custom keyboard-driven widget (musical typing), not a document region.
-			     aria-describedby points at the visually-hidden paragraph below, which spells out the
-			     QWERTY mapping application mode otherwise hides from screen-reader users entirely
-			     (every key gets forwarded to this widget instead of being announced normally). -->
+			<!-- role=application: musical typing forwards every key; the keymap is described for screen readers -->
 			<div
-				class="mt-3 h-32 touch-pan-x overflow-x-auto rounded-xs outline-none [scrollbar-width:none] focus-visible:ring-2 focus-visible:ring-amber-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900 [&::-webkit-scrollbar]:hidden"
+				class="mt-3 h-32 touch-pan-x overflow-x-auto rounded-xs outline-none [scrollbar-width:none] focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-paper [&::-webkit-scrollbar]:hidden"
 				bind:this={scrollEl}
 				bind:clientWidth
 				on:scroll={() => (scrollLeft = scrollEl.scrollLeft)}
@@ -334,16 +286,14 @@
 							type="button"
 							tabindex="-1"
 							data-white={key.midi}
-							class="absolute top-0 flex h-full flex-col items-center justify-between border border-stone-600 bg-stone-100 pt-1 pb-1 text-[10px] font-medium text-stone-700 {pressedMidis.has(
+							class="absolute top-0 flex h-full flex-col items-center justify-between rounded-b-md border border-[#a3b1be] bg-white pt-1 pb-1.5 text-[10px] font-semibold text-[#1a2433] {pressedMidis.has(
 								key.midi
 							)
-								? 'bg-amber-300'
+								? 'bg-[#c9d4de]!'
 								: ''}"
 							style="left: {key.left}px; width: {KEY_WIDTH}px"
 						>
-							<span class="font-mono text-[9px] text-amber-700"
-								>{keyLabelByMidi.get(key.midi) ?? ''}</span
-							>
+							<span class="text-[10px] text-[#56606c]">{keyLabelByMidi.get(key.midi) ?? ''}</span>
 							<span>{key.name}{key.name === 'C' ? key.octave : ''}</span>
 						</button>
 					{/each}
@@ -352,16 +302,14 @@
 							type="button"
 							tabindex="-1"
 							data-black={key.midi}
-							class="absolute top-0 z-10 flex h-[60%] flex-col items-center justify-between rounded-b-sm border border-stone-950 bg-stone-900 pt-0.5 pb-1 text-[9px] font-medium text-stone-300 {pressedMidis.has(
+							class="absolute top-0 z-10 flex h-[60%] flex-col items-center justify-between rounded-b-md border border-[#1a2433] bg-[#1a2433] pt-0.5 pb-1 text-[9px] font-semibold text-[#d2d9de] {pressedMidis.has(
 								key.midi
 							)
-								? 'bg-amber-700'
+								? 'bg-[#56606c]!'
 								: ''}"
 							style="left: {key.left}px; width: {BLACK_WIDTH}px"
 						>
-							<span class="font-mono text-[8px] text-amber-400"
-								>{keyLabelByMidi.get(key.midi) ?? ''}</span
-							>
+							<span class="text-[9px] text-[#a3b1be]">{keyLabelByMidi.get(key.midi) ?? ''}</span>
 							<span>{key.name}</span>
 						</button>
 					{/each}

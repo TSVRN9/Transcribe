@@ -10,16 +10,9 @@ export default defineConfig({
 		SvelteKitPWA({
 			base: '/Transcribe/',
 			injectRegister: 'auto',
-			// base must be repeated here (kit.base, not just the top-level `base` above) and
-			// trailingSlash must match +layout.ts's trailingSlash = 'always' — otherwise the
-			// plugin's auto-discovered route entries resolve wrong (e.g. the root route precache
-			// entry becomes "/" instead of "/Transcribe/", a 404; "share-target" without the
-			// trailing slash 307-redirects) and workbox refuses to precache a redirected or
-			// missing response, which fails the whole service worker install.
+			// must repeat base and match +layout.ts's trailingSlash, or precache entries 404/redirect and the SW install fails
 			kit: { base: '/Transcribe/', trailingSlash: 'always' },
-			// injectManifest (not the default generateSW) so the custom fetch handler in
-			// src/service-worker.ts can intercept the share-target POST — generateSW only lets
-			// you configure caching strategies, not arbitrary fetch logic.
+			// injectManifest so src/service-worker.ts can handle the share-target POST
 			strategies: 'injectManifest',
 			manifest: {
 				scope: '/Transcribe',
@@ -27,8 +20,8 @@ export default defineConfig({
 				name: 'Transcribe',
 				description: 'A simple, keyboard-driven media player for transcription work.',
 				display: 'standalone',
-				theme_color: '#000000',
-				background_color: '#000000',
+				theme_color: '#f3f5f4',
+				background_color: '#f3f5f4',
 				icons: [
 					{
 						src: './pwa-192x192.png',
@@ -58,11 +51,7 @@ export default defineConfig({
 			},
 			injectManifest: {
 				globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,woff,woff2,json,bin}'],
-				// the basic-pitch model (.json + .bin, ~900KB) is excluded from the *eager*
-				// precache on purpose — most visitors never open the pitchgram, so shipping it to
-				// everyone on first visit costs bandwidth for a feature most won't use. It's still
-				// cached for offline use, just on first *use* instead of first *visit* — see the
-				// runtime cache-first handler in src/service-worker.ts.
+				// ~900KB model is cached on first use instead (src/service-worker.ts)
 				globIgnores: ['**/basic-pitch-model/**']
 			}
 		})

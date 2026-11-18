@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { sharedFile } from '../shareTarget';
 
-	// origin-absolute (leading slash) — must match src/service-worker.ts's SHARE_CACHE_KEY
+	// must match SHARE_CACHE_KEY in src/service-worker.ts
 	const SHARE_CACHE_KEY = '/shared-audio';
 
 	onMount(async () => {
@@ -18,9 +18,7 @@
 				await cache.delete(SHARE_CACHE_KEY);
 			}
 		} catch (err) {
-			// caches.open can reject (e.g. Safari private browsing has no Cache API) — the
-			// `finally` below still gets the user back to the app either way, this just stops
-			// the rejection from escaping onMount as an unhandled promise rejection
+			// no Cache API in e.g. Safari private browsing
 			console.error('failed to read shared file', err);
 		} finally {
 			goto(resolve('/'), { replaceState: true });
@@ -28,4 +26,4 @@
 	});
 </script>
 
-<p class="p-10 text-center text-slate-400">Opening shared file…</p>
+<p class="p-10 text-center text-graphite">Opening shared file…</p>

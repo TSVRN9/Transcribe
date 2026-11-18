@@ -1,10 +1,4 @@
-// Runs basic-pitch's outputToNotesPoly off the main thread. melodiaTrick alone measured ~7.4s
-// of fully synchronous computation on a 3-minute clip (see pitchgram.ts) — inline, that freezes
-// the UI with no yield point; here it just keeps this worker busy while the page stays live.
-//
-// Imports the toMidi submodule directly (@spotify/basic-pitch/esm/toMidi.js) rather than the
-// package's top-level barrel, specifically to avoid pulling tf.js into this worker: this
-// algorithm doesn't need it, and tf.js isn't guaranteed to behave well outside a window context.
+// Runs outputToNotesPoly off the main thread. Imports esm/toMidi.js directly so tf.js stays out.
 /// <reference lib="webworker" />
 import type { NoteSegmentSettings, RawModelOutput } from './pitchgram';
 
@@ -24,8 +18,6 @@ export type WorkerResponse =
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
-// cached across calls so re-segmenting on a settings change doesn't re-send the whole
-// (multi-MB, native-fps) frames/onsets payload — only 'setRaw' does that, once per file
 let currentRaw: RawModelOutput | undefined;
 
 ctx.onmessage = async (e: MessageEvent<WorkerRequest>) => {
@@ -40,10 +32,7 @@ ctx.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 		return;
 	}
 
-	// Caught explicitly (rather than left to throw) because a rejection from an async
-	// onmessage handler fires 'unhandledrejection' inside the worker, not the main thread's
-	// worker.onerror — an uncaught failure here would otherwise leave the caller's promise
-	// pending forever with no signal that anything went wrong.
+	// an async onmessage rejection never reaches worker.onerror, so report it explicitly
 	try {
 		const { outputToNotesPoly } = await import('@spotify/basic-pitch/esm/toMidi.js');
 		const { onsetThresh, frameThresh, minNoteLen, inferOnsets, melodiaTrick } = msg.settings;

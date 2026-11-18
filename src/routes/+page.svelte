@@ -7,7 +7,7 @@
 	import PitchgramView from './PitchgramView.svelte';
 	import PianoReference from './PianoReference.svelte';
 	import Icon from './Icon.svelte';
-	import { invertObject, secondsToTime, gridBtn, primaryBtn, iconSize, panel } from './utils';
+	import { invertObject, secondsToTime, gridBtn, primaryBtn, iconSize } from './utils';
 	import {
 		placeholderSeek,
 		type AudioReadyDetail,
@@ -22,23 +22,13 @@
 
 	let mode: 'local' | 'youtube' = 'local';
 
-	// a share-target hand-off always means "play this local file" — switch source even if
-	// YouTube mode was active so LocalAudio mounts and can pick the file up. Skips the confirm
-	// gate below: the user already made this choice by sharing a file into the app, a modal
-	// asking them to confirm their own action would just be in the way (and if unanswered
-	// would strand $sharedFile unconsumed, since a declined confirm leaves mode unchanged).
+	// a shared file always means local mode; no confirm, the user already chose by sharing
 	$: if ($sharedFile && mode !== 'local') setMode('local', { confirm: false });
 
-	// two-screen flow: pick a source, then the player. 'select' stays mounted underneath
-	// (hidden via CSS, not {#if}) so LocalAudio/YoutubeAudio never unmount and lose
-	// playback/decoded state when the user comes back to change source.
+	// the select screen stays mounted under the player so the sources keep their state
 	let screen: 'select' | 'player' = 'select';
 
-	// Switching source unmounts the losing component (LocalAudio/YoutubeAudio, see the
-	// {#if mode ...} below), which silently drops its loaded file/video, flag position, and
-	// any completed pitch analysis. Confirm first whenever there's something real to lose —
-	// this is a UI guard, not a fix for the underlying unmount (see the comment at the
-	// {#if mode ...} block for why keeping both mounted isn't the easy swap it looks like).
+	// switching unmounts the old source and loses its file, flag and analysis
 	function setMode(newMode: 'local' | 'youtube', { confirm: shouldConfirm = true } = {}) {
 		if (mode === newMode) return;
 		if (
@@ -56,17 +46,12 @@
 		seek = placeholderSeek;
 		pitchgramOpen = false;
 		screen = 'select';
-		// pitchStatus/pitchResult/pitchLines/pitchRaw aren't reset by handlePitch until the new
-		// mode's source dispatches its own 'pitch' event — reset them here too, so a pitchgram
-		// opened before that happens doesn't render the old mode's analysis against this mode's
-		// (zero) duration.
 		pitchStatus = 'idle';
 		pitchResult = undefined;
 		pitchLines = undefined;
 		pitchRaw = undefined;
 	}
 
-	// pitchgram view (local audio only — YouTube gives no raw samples to analyze)
 	let pitchgramOpen = false;
 	let pitchStatus: PitchStatus = 'idle';
 	let pitchAnalyzer: PitchAnalyzer = 'neural';
@@ -81,8 +66,7 @@
 			pitchLines = e.detail.lines;
 			pitchRaw = e.detail.raw;
 		} else if (e.detail.status === 'computing' && e.detail.partial) {
-			// a partial result while still computing — render it, but raw stays whatever it
-			// was (Notes/Voices need the final onset/frame data, which only 'done' carries)
+			// raw stays as-is: Notes/Voices need the final onset/frame data
 			pitchResult = e.detail.partial.result;
 			pitchLines = e.detail.partial.lines;
 		} else {
@@ -92,7 +76,6 @@
 		}
 	}
 
-	// playback control
 	let flag = 0; // also for flag
 	let playbackRate: number = 1,
 		currentTime: number = 0,
@@ -116,7 +99,6 @@
 		}
 	}
 
-	// behavior
 	const behavior: Record<Behavior, VoidFunction> = {
 		placeFlag: () => (flag = currentTime),
 		pushFlagBack: () => (flag = Math.max(0, flag - 1)),
@@ -144,7 +126,6 @@
 		jumpForward
 	} = behavior;
 
-	// shortcuts
 	const shortcuts: Record<string, Behavior> = {
 		v: 'resetFlag',
 		s: 'pushFlagBack',
@@ -177,8 +158,10 @@
 
 	function tooltip(b: Behavior) {
 		const key = getShortcut(b);
-		return key === ' ' ? `${behaviorLabels[b]} (Space)` : `${behaviorLabels[b]} (${key})`;
+		return `${behaviorLabels[b]} (${KEY_NAMES[key] ?? key})`;
 	}
+
+	const KEY_NAMES: Record<string, string> = { ' ': 'Space', ArrowLeft: '←', ArrowRight: '→' };
 
 	function label(b: string) {
 		return behaviorLabels[b as Behavior];
@@ -188,24 +171,14 @@
 		return behaviorToShortcuts[b];
 	}
 
-	// Elements that keep their own keyboard behavior instead of ours — text entry, native
-	// <select>/<summary> (whose own arrow/Space handling our preventDefault below would
-	// otherwise hijack), and anything contenteditable. <button> is deliberately NOT here:
-	// Space after clicking Play should toggle playback once via our shortcut, not
-	// scroll/re-click through the browser's own default too (see keydown's comment).
+	// these keep their own key handling; <button> isn't here so Space after a click toggles once
 	const SHORTCUT_EXEMPT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY']);
 	function isShortcutExempt(target: EventTarget | null): boolean {
 		const el = target as HTMLElement | null;
 		return !!el && (SHORTCUT_EXEMPT_TAGS.has(el.tagName) || el.isContentEditable);
 	}
 
-	// Repeatable while a key is held (native OS auto-repeat is exactly what you want for
-	// ramping speed/seek). Everything else fires once per physical press only:
-	// auto-repeating togglePlayback would flicker play/pause on every OS repeat, and
-	// pushFlagBack deliberately isn't here either — the flag is a manually-placed marker
-	// with no "undo" direction, so holding 's' walking it to 0 in under a second at OS
-	// repeat rate would be a real, unrecoverable data-loss footgun, not a convenience.
-	// `event.repeat` (native) distinguishes repeatable from one-shot without a manual timer.
+	// held keys repeat only for these; pushFlagBack would walk the flag to 0 with no undo
 	const REPEATABLE_BEHAVIORS: ReadonlySet<Behavior> = new Set([
 		'jumpBack',
 		'jumpForward',
@@ -213,11 +186,6 @@
 		'slowDown'
 	]);
 
-	// Browsers apply their own default action to these keys on keydown — Space scrolls the
-	// page and/or clicks whatever's focused, Home/End scroll the viewport, arrows nudge a
-	// focused range input. Suppress the default whenever the key is one of ours so only our
-	// shortcut runs. Firing the behavior here too (not on keyup) lets a held key auto-repeat
-	// the shortcut the same way holding an arrow key repeats in any text field.
 	function keydown(event: KeyboardEvent) {
 		if (isShortcutExempt(event.target)) return;
 		if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -233,11 +201,7 @@
 		return () => document.removeEventListener('keydown', keydown);
 	});
 
-	// Keyboard-shortcut legend: opened by default the first time only (then respects
-	// whatever the user leaves it at), read from localStorage — the app's main value
-	// proposition is otherwise invisible to a first-time user until they stumble onto it.
-	// Starts closed for the prerendered/pre-mount render (no localStorage on the server);
-	// onMount flips it open before paint if this browser hasn't seen it before.
+	// open on first visit only
 	let shortcutsOpen = false;
 	onMount(() => {
 		shortcutsOpen = localStorage.getItem('transcribe-shortcuts-seen') !== '1';
@@ -247,151 +211,127 @@
 	}
 
 	const modeBtn =
-		'flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:cursor-default';
-	// tape-deck reels flanking the player panel — spin speed tracks playback rate, pause with playback.
-	// Pure decoration (aria-hidden), so no padding/border/background — just the icon, bigger than a
-	// normal control icon since it reads as faceplate detail, not something to click.
-	$: reelSpinStyle = `animation-duration: ${2 / playbackRate}s; animation-play-state: ${paused ? 'paused' : 'running'}`;
+		'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors';
+	$: progress = audiolength ? (currentTime / audiolength) * 100 : 0;
+	$: flagPos = audiolength ? (flag / audiolength) * 100 : 0;
 </script>
 
 <header
-	class="relative mx-auto max-w-xl px-4 pt-10 pb-6 text-center {pitchgramOpen
-		? 'lg:max-w-6xl'
+	class="mx-auto flex max-w-2xl items-baseline justify-between gap-4 px-4 pt-8 pb-6 sm:px-6 {pitchgramOpen
+		? 'lg:max-w-none lg:px-8'
 		: ''}"
 >
+	<h1 class="wordmark text-3xl leading-none font-extrabold">Transcribe</h1>
 	{#if screen === 'player'}
 		<button
-			class="absolute top-9 left-4 rounded-md px-2 py-1 text-sm text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-200"
-			on:click={() => (screen = 'select')}>← Change source</button
+			class="rounded-md px-2 py-1 text-sm font-medium text-graphite transition-colors hover:bg-wash hover:text-ink"
+			on:click={() => (screen = 'select')}>Change source</button
 		>
 	{/if}
-	<h1
-		class="font-display text-4xl font-semibold tracking-wide text-stone-100 uppercase"
-		style="letter-spacing: 0.06em"
-	>
-		Transcribe
-	</h1>
-	<p class="mt-1 font-mono text-[11px] tracking-[0.3em] text-amber-500/70 uppercase">
-		Model TR‑1 · Tape Transcription Unit
-	</p>
 </header>
 
-<main class="mx-auto flex max-w-xl flex-col gap-4 px-4 pb-12 {pitchgramOpen ? 'lg:max-w-6xl' : ''}">
-	<div class="flex flex-col gap-4 {pitchgramOpen ? 'lg:flex-row lg:items-start' : ''}">
+<main
+	class="mx-auto flex max-w-2xl flex-col gap-6 px-4 pb-16 sm:px-6 {pitchgramOpen
+		? 'lg:max-w-none lg:px-8'
+		: ''}"
+>
+	<div class="flex flex-col gap-6 {pitchgramOpen ? 'lg:flex-row lg:items-start' : ''}">
 		<div
-			class="flex flex-col gap-4 {pitchgramOpen
-				? 'sr-only lg:not-sr-only lg:flex lg:w-96 lg:shrink-0'
+			class="flex flex-col gap-6 {pitchgramOpen
+				? 'sr-only lg:not-sr-only lg:flex lg:w-[26rem] lg:shrink-0'
 				: ''}"
 		>
-			<!-- select screen: stays mounted (hidden via CSS, not {#if}) once a source is playing,
-			     so LocalAudio/YoutubeAudio never lose their decoded/playback state. Uses sr-only
-			     (clipped + off-screen) rather than display:none — Chrome suspends metadata loading
-			     on a display:none <audio> element, which silently breaks seek/duration forever. -->
-			<div class="flex flex-col gap-4 {screen === 'select' ? '' : 'sr-only'}">
-				<div class="flex gap-2 {panel}">
+			<!-- sr-only, not display:none: Chrome stops loading metadata for a hidden <audio> -->
+			<section class="flex flex-col gap-4 {screen === 'select' ? '' : 'sr-only'}">
+				<div class="flex gap-1 rounded-lg bg-wash p-1" role="group" aria-label="Source">
 					<button
-						class="{modeBtn} flex items-center justify-center gap-1.5 {mode === 'local'
-							? 'bg-amber-500 text-stone-950'
-							: 'bg-stone-700 hover:bg-stone-600'}"
+						class="{modeBtn} {mode === 'local'
+							? 'bg-paper text-ink shadow-sm'
+							: 'text-graphite hover:text-ink'}"
 						on:click={() => setMode('local')}
 						aria-pressed={mode === 'local'}
-						><Icon name="musical-note" class="h-4 w-4" /> Local File</button
+						><Icon name="musical-note" class="h-4 w-4" /> File</button
 					>
 					<button
-						class="{modeBtn} flex items-center justify-center gap-1.5 {mode === 'youtube'
-							? 'bg-amber-500 text-stone-950'
-							: 'bg-stone-700 hover:bg-stone-600'}"
+						class="{modeBtn} {mode === 'youtube'
+							? 'bg-paper text-ink shadow-sm'
+							: 'text-graphite hover:text-ink'}"
 						on:click={() => setMode('youtube')}
 						aria-pressed={mode === 'youtube'}><Icon name="film" class="h-4 w-4" /> YouTube</button
 					>
 				</div>
 
-				<div class={panel}>
-					<!-- Unmounts the losing source on switch (setMode's confirm guards the data loss).
-					     Deliberately not "stays mounted, hidden" like the screen toggle above: paused/
-					     playbackRate/volume/muted are bound to both LocalAudio and YoutubeAudio here —
-					     if both were mounted at once, playing one would call playVideo()/setVolume() on
-					     the other too via its own reactive afterUpdate, so only one may exist at a time. -->
-					{#if mode === 'local'}
-						<LocalAudio
-							bind:playbackRate
-							bind:paused
-							bind:volume
-							bind:muted
-							analyze={pitchgramOpen}
-							analyzer={pitchAnalyzer}
-							on:ready={(e) => handleReady('local', e)}
-							on:currentTime={(e) => (currentTime = e.detail.currentTime)}
-							on:pitch={handlePitch}
-						/>
-					{:else if mode === 'youtube'}
-						<YoutubeAudio
-							bind:playbackRate
-							bind:paused
-							bind:volume
-							bind:muted
-							on:ready={(e) => handleReady('youtube', e)}
-							on:currentTime={(e) => (currentTime = e.detail.currentTime)}
-						/>
-					{/if}
-				</div>
+				<!-- one source at a time: both bind the same playback props and would both play -->
+				{#if mode === 'local'}
+					<LocalAudio
+						bind:playbackRate
+						bind:paused
+						bind:volume
+						bind:muted
+						analyze={pitchgramOpen}
+						analyzer={pitchAnalyzer}
+						on:ready={(e) => handleReady('local', e)}
+						on:currentTime={(e) => (currentTime = e.detail.currentTime)}
+						on:pitch={handlePitch}
+					/>
+				{:else if mode === 'youtube'}
+					<YoutubeAudio
+						bind:playbackRate
+						bind:paused
+						bind:volume
+						bind:muted
+						on:ready={(e) => handleReady('youtube', e)}
+						on:currentTime={(e) => (currentTime = e.detail.currentTime)}
+					/>
+				{/if}
 
 				{#if isReady}
-					<button
-						class="rounded-md bg-stone-800 py-3 text-sm font-medium hover:bg-stone-700"
-						on:click={() => (screen = 'player')}>→ Back to player</button
+					<button class="{gridBtn} text-sm font-semibold" on:click={() => (screen = 'player')}
+						>Back to player</button
 					>
 				{/if}
-			</div>
+			</section>
 
 			{#if screen === 'player'}
-				<div class="relative flex flex-col gap-4 {panel}">
-					<span
-						class="absolute -top-4 -left-4 animate-spin"
-						style={reelSpinStyle}
-						aria-hidden="true"
-					>
-						<Icon name="tape-reel" class="h-8 w-8 text-stone-500 sm:h-10 sm:w-10" />
-					</span>
-					<span
-						class="absolute -top-4 -right-4 animate-spin"
-						style={reelSpinStyle}
-						aria-hidden="true"
-					>
-						<Icon name="tape-reel" class="h-8 w-8 text-stone-500 sm:h-10 sm:w-10" />
-					</span>
-					<div
-						class="flex items-stretch justify-center divide-x divide-stone-800 rounded-sm border border-stone-800 bg-stone-950"
-					>
-						<div class="flex flex-1 items-center justify-center gap-2 px-4 py-2.5">
-							<span
-								class="font-mono text-lg tracking-[0.15em] text-amber-400"
-								style="text-shadow: 0 0 8px rgba(251, 191, 36, 0.45)"
-								>{secondsToTime(currentTime)}</span
-							>
-						</div>
-						<div class="flex flex-1 items-center justify-center gap-2 px-4 py-2.5">
-							<Icon name="flag-solid" class="h-4 w-4 text-orange-500" />
-							<span
-								class="font-mono text-lg tracking-[0.15em] text-orange-400"
-								style="text-shadow: 0 0 8px rgba(251, 146, 60, 0.45)">{secondsToTime(flag)}</span
-							>
-						</div>
+				<section class="flex flex-col gap-5" aria-label="Player">
+					<div class="flex items-end justify-between gap-4">
+						<output
+							class="timecode text-6xl leading-[0.85] font-bold sm:text-7xl"
+							aria-label="Current time">{secondsToTime(currentTime)}</output
+						>
+						<button
+							class="flex items-center gap-1.5 rounded-md px-2 py-1 text-pencil transition-colors hover:bg-wash"
+							on:click={rewind}
+							title={tooltip('rewind')}
+							aria-label="{tooltip('rewind')}, flag at {secondsToTime(flag)}"
+						>
+							<Icon name="flag-solid" class="h-4 w-4" />
+							<span class="timecode text-xl font-semibold">{secondsToTime(flag)}</span>
+						</button>
 					</div>
 
-					<input
-						type="range"
-						aria-label="Seek"
-						value={currentTime}
-						on:input={(e) => seek(e.currentTarget.valueAsNumber)}
-						on:pointerup={(e) => e.currentTarget.blur()}
-						min="0"
-						max={audiolength}
-						step="0.1"
-						class="h-1.5 w-full appearance-none rounded-full bg-stone-800 accent-amber-500"
-					/>
+					<div class="relative" style="--p: {progress}%">
+						<input
+							type="range"
+							aria-label="Seek"
+							value={currentTime}
+							on:input={(e) => seek(e.currentTarget.valueAsNumber)}
+							on:pointerup={(e) => e.currentTarget.blur()}
+							min="0"
+							max={audiolength}
+							step="0.1"
+							class="seek"
+						/>
+						{#if flag > 0}
+							<span
+								class="pointer-events-none absolute top-1/2 h-4 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-pencil"
+								style="left: {flagPos}%"
+								aria-hidden="true"
+							></span>
+						{/if}
+					</div>
 
-					<div class="grid grid-cols-3 gap-2">
+					<div class="grid grid-cols-[1fr_1.6fr_1fr] gap-2">
 						<button
 							class={gridBtn}
 							on:click={jumpBack}
@@ -403,7 +343,7 @@
 							on:click={togglePlayback}
 							title={tooltip('togglePlayback')}
 							aria-label={tooltip('togglePlayback')}
-							><Icon name={paused ? 'play' : 'pause'} class={iconSize} /></button
+							><Icon name={paused ? 'play' : 'pause'} class="h-7 w-7" /></button
 						>
 						<button
 							class={gridBtn}
@@ -412,101 +352,104 @@
 							aria-label={tooltip('jumpForward')}><Icon name="forward" class={iconSize} /></button
 						>
 					</div>
-					<div class="grid grid-cols-4 gap-2">
-						<button
-							class={gridBtn}
-							on:click={rewind}
-							title={tooltip('rewind')}
-							aria-label={tooltip('rewind')}
-							><Icon name="flag" class="{iconSize} text-orange-400" /></button
-						>
-						<button
-							class={gridBtn}
-							on:click={pushFlagBack}
-							title={tooltip('pushFlagBack')}
-							aria-label={tooltip('pushFlagBack')}
-							><Icon name="chevron-left" class={iconSize} /></button
-						>
-						<button
-							class={gridBtn}
-							on:click={placeFlag}
-							title={tooltip('placeFlag')}
-							aria-label={tooltip('placeFlag')}
-							><Icon name="flag-solid" class="{iconSize} text-orange-400" /></button
-						>
-						<button
-							class={gridBtn}
-							on:click={resetFlag}
-							title={tooltip('resetFlag')}
-							aria-label={tooltip('resetFlag')}><Icon name="x-mark" class={iconSize} /></button
-						>
-					</div>
-					<div class="grid grid-cols-3 gap-2">
-						<button
-							class={gridBtn}
-							on:click={slowDown}
-							title={tooltip('slowDown')}
-							aria-label={tooltip('slowDown')}><Icon name="minus" class={iconSize} /></button
-						>
-						<button
-							class="{gridBtn} font-mono text-sm"
-							on:click={() => (playbackRate = 1)}
-							title="Reset speed to 100%"
-							aria-label="Reset speed to 100%">{Math.round(playbackRate * 100)}%</button
-						>
-						<button
-							class={gridBtn}
-							on:click={speedUp}
-							title={tooltip('speedUp')}
-							aria-label={tooltip('speedUp')}><Icon name="plus" class={iconSize} /></button
-						>
+
+					<div class="grid grid-cols-1 gap-2 sm:grid-cols-[4fr_3fr] sm:gap-4">
+						<div class="grid grid-cols-4 gap-2" role="group" aria-label="Flag">
+							<button
+								class={gridBtn}
+								on:click={placeFlag}
+								title={tooltip('placeFlag')}
+								aria-label={tooltip('placeFlag')}
+								><Icon name="flag-solid" class="{iconSize} text-pencil" /></button
+							>
+							<button
+								class={gridBtn}
+								on:click={rewind}
+								title={tooltip('rewind')}
+								aria-label={tooltip('rewind')}
+								><Icon name="flag" class="{iconSize} text-pencil" /></button
+							>
+							<button
+								class={gridBtn}
+								on:click={pushFlagBack}
+								title={tooltip('pushFlagBack')}
+								aria-label={tooltip('pushFlagBack')}
+								><Icon name="chevron-left" class={iconSize} /></button
+							>
+							<button
+								class={gridBtn}
+								on:click={resetFlag}
+								title={tooltip('resetFlag')}
+								aria-label={tooltip('resetFlag')}><Icon name="x-mark" class={iconSize} /></button
+							>
+						</div>
+						<div class="grid grid-cols-3 gap-2" role="group" aria-label="Speed">
+							<button
+								class={gridBtn}
+								on:click={slowDown}
+								title={tooltip('slowDown')}
+								aria-label={tooltip('slowDown')}><Icon name="minus" class={iconSize} /></button
+							>
+							<button
+								class="{gridBtn} timecode text-base font-semibold"
+								on:click={() => (playbackRate = 1)}
+								title="Reset speed to 100%"
+								aria-label="Speed {Math.round(playbackRate * 100)}%, reset to 100%"
+								>{Math.round(playbackRate * 100)}%</button
+							>
+							<button
+								class={gridBtn}
+								on:click={speedUp}
+								title={tooltip('speedUp')}
+								aria-label={tooltip('speedUp')}><Icon name="plus" class={iconSize} /></button
+							>
+						</div>
 					</div>
 
 					{#if mode === 'local'}
 						<button
-							class="flex items-center justify-center gap-2 rounded-md bg-stone-800 py-3 text-sm font-medium hover:bg-stone-700"
+							class="{gridBtn} gap-2 text-sm font-semibold"
 							on:click={() => (pitchgramOpen = true)}
-							><Icon name="presentation-chart-line" class="h-5 w-5" /> Open Pitchgram</button
+							><Icon name="presentation-chart-line" class="h-5 w-5" /> Open pitchgram</button
 						>
 					{:else}
-						<p
-							class="flex items-center justify-center gap-2 rounded-md border border-stone-800 py-3 text-center text-sm text-stone-500"
-							title="Pitchgram analyzes raw audio samples, which the YouTube IFrame player never exposes — switch to a local file to use it."
-						>
-							<Icon name="presentation-chart-line" class="h-5 w-5" /> Pitchgram needs a local audio file
+						<p class="text-sm text-graphite">
+							Pitchgram works with audio files, not YouTube links.
 						</p>
 					{/if}
-
-					<details
-						class="rounded-md border border-stone-800 bg-stone-950/50 px-3 py-2"
-						bind:open={shortcutsOpen}
-						on:toggle={markShortcutsSeen}
-					>
-						<summary class="cursor-pointer text-sm font-medium text-stone-300"
-							>Keyboard shortcuts</summary
-						>
-						<ul class="mt-2 space-y-1 text-sm text-stone-400">
-							{#each Object.entries(behaviorToShortcuts) as [b, key] (b)}
-								<li>
-									<kbd
-										class="rounded-sm border border-stone-600 bg-stone-700 px-1.5 py-0.5 font-mono text-xs"
-										>{key === ' ' ? 'Space' : key}</kbd
-									>
-									— {label(b)}
-								</li>
-							{/each}
-						</ul>
-					</details>
-				</div>
+				</section>
 
 				<PianoReference />
+
+				<details class="group" bind:open={shortcutsOpen} on:toggle={markShortcutsSeen}>
+					<summary
+						class="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-graphite hover:text-ink"
+					>
+						<Icon
+							name="chevron-left"
+							class="h-4 w-4 rotate-180 transition-transform group-open:rotate-90"
+						/>
+						Keyboard shortcuts
+					</summary>
+					<ul class="mt-3 grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
+						{#each Object.entries(behaviorToShortcuts) as [b, key] (b)}
+							<li class="flex items-center gap-3">
+								<kbd
+									class="inline-block min-w-12 rounded-md border border-b-2 border-staff bg-paper px-1.5 text-center font-sans text-xs font-semibold"
+									>{KEY_NAMES[key] ?? key}</kbd
+								>
+								<span class="text-graphite">{label(b)}</span>
+							</li>
+						{/each}
+					</ul>
+				</details>
 			{/if}
 		</div>
 
 		{#if pitchgramOpen}
 			<div
 				transition:fade={{ duration: 150 }}
-				class="fixed inset-0 z-40 flex min-w-0 flex-col bg-stone-950 p-3 lg:static lg:inset-auto lg:z-auto lg:h-[75vh] lg:flex-1 lg:rounded-md lg:border lg:border-stone-800 lg:bg-stone-900 lg:p-4"
+				class="fixed inset-0 z-40 flex min-w-0 flex-col bg-paper p-3 lg:static lg:inset-auto lg:z-auto lg:h-[calc(100vh-8rem)] lg:min-h-[32rem] lg:flex-1 lg:p-0"
 			>
 				<PitchgramView
 					status={pitchStatus}
@@ -528,3 +471,62 @@
 		{/if}
 	</div>
 </main>
+
+<style>
+	.wordmark {
+		font-stretch: 75%;
+		letter-spacing: -0.01em;
+	}
+	.timecode {
+		font-variant-numeric: tabular-nums;
+		font-stretch: 75%;
+		letter-spacing: -0.02em;
+	}
+
+	.seek {
+		appearance: none;
+		display: block;
+		width: 100%;
+		height: 24px;
+		background: transparent;
+		cursor: pointer;
+	}
+	.seek::-webkit-slider-runnable-track {
+		height: 6px;
+		border-radius: 9999px;
+		background: linear-gradient(to right, var(--color-ink) var(--p), var(--color-staff) var(--p));
+	}
+	.seek::-webkit-slider-thumb {
+		appearance: none;
+		width: 16px;
+		height: 16px;
+		margin-top: -5px;
+		border-radius: 50%;
+		background: var(--color-ink);
+		transition: transform 0.1s;
+	}
+	.seek:hover::-webkit-slider-thumb {
+		transform: scale(1.25);
+	}
+	.seek::-moz-range-track {
+		height: 6px;
+		border-radius: 9999px;
+		background: var(--color-staff);
+	}
+	.seek::-moz-range-progress {
+		height: 6px;
+		border-radius: 9999px;
+		background: var(--color-ink);
+	}
+	.seek::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		border: 0;
+		border-radius: 50%;
+		background: var(--color-ink);
+		transition: transform 0.1s;
+	}
+	.seek:hover::-moz-range-thumb {
+		transform: scale(1.25);
+	}
+</style>

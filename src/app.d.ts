@@ -9,9 +9,6 @@ declare global {
 	}
 
 	interface Window {
-		// the YouTube IFrame API script (loaded in YoutubeAudio.svelte's onMount) calls this
-		// global once it's ready — declared here instead of `(window as any)` so setting it
-		// type-checks properly
 		onYouTubeIframeAPIReady?: () => void;
 	}
 }

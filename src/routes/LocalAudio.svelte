@@ -18,8 +18,7 @@
 
 	let audioFile: File | undefined;
 	let handledShared: File | undefined;
-	// consume once, then clear — otherwise switching away and back to local mode would
-	// silently reload a stale shared file every time
+	// consume once, or switching modes would reload a stale shared file
 	$: if ($sharedFile && $sharedFile !== handledShared) {
 		audioFile = handledShared = $sharedFile;
 		sharedFile.set(undefined);
@@ -32,19 +31,12 @@
 		}
 	});
 	$: currentTimeDispatch('currentTime', { currentTime: time });
-	// a new file invalidates every cached analyzer result; switching analyzer on the same file
-	// doesn't — see pitchCache below
 	$: if (audioFile !== pitchFile) {
 		pitchFile = audioFile;
 		pitchCache.clear();
 		pitchStatus = 'idle';
 	}
-	// analyze is set true once the caller opens the pitchgram view. Re-runs whenever analyzer
-	// changes too (it's referenced below), so switching Neural <-> FFT lands here: a cached
-	// result replays instantly, otherwise a fresh computation starts. pitchStatus === 'computing'
-	// gates against starting a second computation while one's already in flight — switching
-	// analyzer mid-computation just queues the new one for when the current one finishes,
-	// rather than fighting it for the main thread.
+	// one computation at a time; an analyzer switch mid-run waits, and cached results replay
 	$: if (analyze && audioFile && pitchStatus !== 'computing') {
 		const cached = pitchCache.get(analyzer);
 		if (cached) pitchDispatch('pitch', cached);
@@ -54,11 +46,7 @@
 	let time: number = 0;
 	let duration: number = 0;
 
-	// Each file picked mints a fresh blob URL; without revoking the previous one, a
-	// transcription session working through a folder of takes leaks one per file for the
-	// page's lifetime (the URL keeps the File handle alive). Guarded by `audioFile` the same
-	// way the <audio> below is, so this never runs during prerender (no File/URL.createObjectURL
-	// server-side) — the file is always undefined there.
+	// revoke the previous blob URL, or every file in a session leaks
 	let audioUrl: string | undefined;
 	$: if (audioFile) {
 		const nextUrl = URL.createObjectURL(audioFile);
@@ -81,9 +69,7 @@
 
 	let pitchFile: File | undefined;
 	let pitchStatus: 'idle' | 'computing' = 'idle';
-	// keyed by analyzer, cleared only when the file itself changes — switching between Neural
-	// and FFT (or back to a view already open before) replays the cached result instead of
-	// re-running the model/FFT from scratch
+	// keyed by analyzer, cleared only when the file changes
 	const pitchCache = new SvelteMap<
 		PitchAnalyzer,
 		PitchEventDetail & { status: 'done' | 'error' }
@@ -95,8 +81,7 @@
 			pitchDispatch('pitch', { status: 'computing' });
 		try {
 			const arrayBuffer = await file.arrayBuffer();
-			// basic-pitch requires mono audio at exactly 22050Hz; the FFT path doesn't strictly
-			// need it, but decoding once at a fixed rate keeps both analyzers on the same footing
+			// basic-pitch needs 22050Hz mono
 			const ctx = new OfflineAudioContext(1, 1, 22050);
 			const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 			if (file !== audioFile) return; // file was swapped mid-decode — cache would be stale, drop it
@@ -117,8 +102,7 @@
 							`${base}/basic-pitch-model/model.json`,
 							duration,
 							(partial) => {
-								// stale by the time it arrives (file/analyzer changed mid-analysis) — drop it,
-								// the in-flight computePitch call for the new selection owns the dispatch now
+								// stale: file or analyzer changed mid-analysis
 								if (file === audioFile && chosenAnalyzer === analyzer)
 									pitchDispatch('pitch', { status: 'computing', partial });
 							}
@@ -137,44 +121,43 @@
 		} catch (err) {
 			console.error('pitch analysis failed', err);
 			pitchStatus = 'idle';
-			// deliberately not cached as an 'error' entry — a transient failure (offline, a
-			// flaky model fetch) would otherwise latch forever, since the cache is only
-			// cleared when the file itself changes; leaving it uncached means reopening the
-			// pitchgram naturally retries instead of replaying the same stale failure
+			// not cached, so a transient failure (offline model fetch) retries on reopen
 			if (file === audioFile && chosenAnalyzer === analyzer)
 				pitchDispatch('pitch', { status: 'error' });
 		}
 	}
 </script>
 
-<!-- Input -->
-<div class="flex justify-center">
+<label
+	class="group relative flex min-h-40 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-staff px-6 py-8 text-center transition-colors hover:border-ink has-[:focus-visible]:border-ink"
+>
 	<input
 		type="file"
-		accept=".mp3, .ogg, .wav"
+		accept="audio/*,.mp3,.ogg,.wav"
 		on:change={(e) => (audioFile = e.currentTarget.files?.[0])}
-		class="text-sm text-stone-400 file:mr-3 file:rounded-md file:border-0 file:bg-amber-600 file:px-3 file:py-2 file:text-stone-100 file:hover:bg-amber-500"
+		class="absolute inset-0 cursor-pointer opacity-0"
 	/>
-</div>
-<!-- Source -->
+	{#if audioFile}
+		<span class="max-w-full truncate text-lg font-semibold">{audioFile.name}</span>
+		<span class="text-sm text-graphite">Drop or choose another file to replace it</span>
+	{:else}
+		<span class="text-lg font-semibold">Drop an audio file here</span>
+		<span class="text-sm text-graphite">or click to choose one</span>
+	{/if}
+</label>
 {#if audioFile && audioUrl}
-	<div class="mt-3 flex justify-center">
-		<!-- blur on play/pause: the app's own transport already duplicates every control here
-		     (play/pause, seek, speed) except volume/mute, so this stays for that — but a
-		     focused native control also gives Space its own play/pause handling, which would
-		     otherwise double-toggle against the app's global Space shortcut. -->
-		<audio
-			controls
-			src={audioUrl}
-			bind:playbackRate
-			bind:currentTime={time}
-			bind:paused
-			bind:volume
-			bind:muted
-			bind:duration
-			on:play={(e) => e.currentTarget.blur()}
-			on:pause={(e) => e.currentTarget.blur()}
-			class="w-full"
-		></audio>
-	</div>
+	<!-- blur so a focused native control doesn't double-toggle on the global Space shortcut -->
+	<audio
+		controls
+		src={audioUrl}
+		bind:playbackRate
+		bind:currentTime={time}
+		bind:paused
+		bind:volume
+		bind:muted
+		bind:duration
+		on:play={(e) => e.currentTarget.blur()}
+		on:pause={(e) => e.currentTarget.blur()}
+		class="w-full"
+	></audio>
 {/if}

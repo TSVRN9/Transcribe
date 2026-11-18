@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { fade, fly } from 'svelte/transition';
 	import type { LinePoint, PitchLines, RawModelOutput, RenderedNote } from './pitchgram';
@@ -19,6 +19,7 @@
 	import { secondsToTime, gridBtn, primaryBtn, iconSize } from './utils';
 	import Icon from './Icon.svelte';
 	import PianoReference from './PianoReference.svelte';
+	import { estimateKey } from './pitch/rhythmKey';
 
 	export let status: PitchStatus = 'idle';
 	export let frames: Float32Array[] | undefined = undefined;
@@ -30,20 +31,12 @@
 	export let duration = 0;
 	export let seek: SeekFunction = placeholderSeek;
 
-	// mobile widget: playback state/behaviors owned by the parent, this view just calls them
-	// through the same `behavior` map +page.svelte builds — one prop instead of one per
-	// behavior, so a new Behavior doesn't also mean a new prop here and in every call site below
 	export let paused = true;
 	export let playbackRate = 1;
 	export let behavior: Record<Behavior, VoidFunction>;
 	export let resetSpeed: VoidFunction;
 	export let onClose: VoidFunction;
 
-	// mobile "screens": pitchgram takes the whole viewport on a phone (see the fixed-inset
-	// wrapper in +page.svelte), so speed/flag controls and the piano — all reachable from the
-	// sidebar on desktop — have nowhere to live. Instead of cramming them permanently into the
-	// pitchgram's own vertical budget, they live in a sheet that slides up on demand and slides
-	// back down out of the way, keeping the canvas full-height the rest of the time.
 	let mobileSheet: 'none' | 'controls' | 'piano' = 'none';
 	function toggleSheet(which: 'controls' | 'piano') {
 		mobileSheet = mobileSheet === which ? 'none' : which;
@@ -53,8 +46,6 @@
 	const SEMITONE_BINS = BINS_PER_OCTAVE / 12;
 	const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-	// note gutter: only "C" labels at low vertical zoom (matches the old octave-only
-	// view), every semitone name once there's enough pixel height per row to read them
 	$: pxPerSemitone = scaleY * SEMITONE_BINS;
 	$: noteLabels = (() => {
 		const showAll = pxPerSemitone >= 18;
@@ -72,40 +63,60 @@
 		return out;
 	})();
 
-	// horizontal grid lines via CSS gradients (semitone + brighter octave lines) — stay
-	// correct at any vertical zoom since they're percentage-based, not pixel-based
 	const octavePct = 100 / OCTAVE_COUNT;
 	const semitonePct = 100 / (OCTAVE_COUNT * 12);
+	const BLACK_KEYS = [1, 3, 6, 8, 10];
+	const blackKeyLanes = Array.from({ length: 12 }, (_, k) => {
+		const c = BLACK_KEYS.includes(k)
+			? 'color-mix(in srgb, var(--color-ink) 5%, transparent)'
+			: 'transparent';
+		return `${c} ${k * semitonePct}% ${(k + 1) * semitonePct}%`;
+	}).join(', ');
 	const gridStyle =
 		`background-image:` +
-		`repeating-linear-gradient(to top, rgba(255,255,255,0.16) 0, rgba(255,255,255,0.16) 1px, transparent 1px, transparent ${octavePct}%),` +
-		`repeating-linear-gradient(to top, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent ${semitonePct}%);`;
+		`repeating-linear-gradient(to top, color-mix(in srgb, var(--color-ink) 22%, transparent) 0 1px, transparent 1px ${octavePct}%),` +
+		`repeating-linear-gradient(to top, color-mix(in srgb, var(--color-ink) 7%, transparent) 0 1px, transparent 1px ${semitonePct}%),` +
+		`repeating-linear-gradient(to top, ${blackKeyLanes});`;
 
-	// dark -> blue -> cyan -> yellow-white: keeps quiet/buried bins distinguishable
-	// instead of crushing them into near-black the way a single-hue lightness ramp would
-	const COLOR_STOPS: [number, number, number, number][] = [
-		[0, 8, 10, 20],
-		[0.35, 30, 60, 140],
-		[0.65, 0, 180, 200],
-		[1, 255, 240, 150]
+	// multi-hue ramps keep quiet bins distinguishable from silence
+	type Stops = [number, number, number, number][];
+	const PAPER_STOPS: Stops = [
+		[0, 243, 245, 244],
+		[0.3, 186, 203, 219],
+		[0.6, 76, 108, 150],
+		[1, 18, 26, 40]
 	];
-	function pitchColor(t: number): [number, number, number] {
-		for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
-			const [p0, r0, g0, b0] = COLOR_STOPS[i];
-			const [p1, r1, g1, b1] = COLOR_STOPS[i + 1];
+	const NIGHT_STOPS: Stops = [
+		[0, 18, 24, 33],
+		[0.35, 36, 66, 108],
+		[0.7, 110, 165, 205],
+		[1, 240, 244, 236]
+	];
+	let colorStops = PAPER_STOPS;
+	onMount(() => {
+		const dark = matchMedia('(prefers-color-scheme: dark)');
+		const update = () => (colorStops = dark.matches ? NIGHT_STOPS : PAPER_STOPS);
+		update();
+		dark.addEventListener('change', update);
+		return () => dark.removeEventListener('change', update);
+	});
+	function pitchColor(t: number, stops: Stops): [number, number, number] {
+		for (let i = 0; i < stops.length - 1; i++) {
+			const [p0, r0, g0, b0] = stops[i];
+			const [p1, r1, g1, b1] = stops[i + 1];
 			if (t <= p1) {
 				const f = (t - p0) / (p1 - p0);
 				return [r0 + (r1 - r0) * f, g0 + (g1 - g0) * f, b0 + (b1 - b0) * f];
 			}
 		}
-		const [, r, g, b] = COLOR_STOPS[COLOR_STOPS.length - 1];
+		const [, r, g, b] = stops[stops.length - 1];
 		return [r, g, b];
 	}
 
 	let canvasEl: HTMLCanvasElement;
-	$: if (canvasEl && frames) draw(frames);
+	$: if (canvasEl && frames) draw(frames, colorStops);
 
-	function draw(frames: Float32Array[]) {
+	function draw(frames: Float32Array[], stops: Stops) {
 		canvasEl.width = frames.length;
 		canvasEl.height = TOTAL_BINS;
 		const ctx = canvasEl.getContext('2d');
@@ -113,9 +124,8 @@
 		const image = ctx.createImageData(frames.length, TOTAL_BINS);
 		for (let x = 0; x < frames.length; x++) {
 			for (let row = 0; row < TOTAL_BINS; row++) {
-				// bin 0 = lowest octave (C{OCTAVE_START}), so higher pitch reads higher on screen
 				const bin = TOTAL_BINS - 1 - row;
-				const [r, g, b] = pitchColor(frames[x][bin]);
+				const [r, g, b] = pitchColor(frames[x][bin], stops);
 				const i = (row * frames.length + x) * 4;
 				image.data[i] = r;
 				image.data[i + 1] = g;
@@ -126,10 +136,6 @@
 		ctx.putImageData(image, 0, 0);
 	}
 
-	// draws a gap wherever the model's own confidence for a point falls below the
-	// gauge threshold, instead of connecting through a note it wasn't sure about
-	// shared by the Notes and Voices SVG rects — real-time positioning via nativeFrameToTime,
-	// not a plain proportion of raw frame count (see nativeFrameToTime's comment in pitchgram.ts)
 	function noteX(startFrame: number, duration: number, frameCount: number): number {
 		return (nativeFrameToTime(startFrame) / duration) * frameCount;
 	}
@@ -161,49 +167,32 @@
 		return d;
 	}
 
-	// viewMode is the single on/off switch for lines/notes (off by default, per request) —
-	// the per-band checkboxes and confidence gauge only matter once it's 'combined', and the
-	// advanced note-segmentation settings only matter once it's 'notes'
+	const selectCls =
+		'min-h-9 rounded-lg border border-staff bg-paper px-2 py-1.5 font-medium text-ink';
+	const zoomBtn =
+		'flex h-10 w-10 items-center justify-center rounded-lg text-ink transition-colors hover:bg-wash-strong';
+
 	type ViewMode = 'heatmap' | 'combined' | 'notes' | 'voices';
 	let viewMode: ViewMode = 'heatmap';
-	// Notes/Voices need basic-pitch's onset/frame data to segment — the FFT analyzer has none,
-	// so fall back out of them if the analyzer switches while one is selected.
+	// FFT has no onset/frame data to segment
 	$: notesAvailable = !!raw?.frames.length;
 	$: if ((viewMode === 'notes' || viewMode === 'voices') && !notesAvailable) viewMode = 'heatmap';
-
-	const VIEW_MODE_INFO: Record<ViewMode, string> = {
-		heatmap:
-			"Everything that's happening, pitch-wise — the brighter a spot, the more that pitch is present. Nothing's picked out yet, so it can look busy.",
-		combined:
-			"Adds three lines on top of the heatmap, each tracking whatever's strongest right now in the melody, inner-voice, and bass ranges — a quick way to follow the main line without reading the whole heatmap.",
-		notes:
-			'Turns the heatmap into distinct note blocks, the way the model would actually transcribe it, instead of a continuous smear of pitch.',
-		voices:
-			'Groups those notes into up to four separate melodic lines, so you can follow one voice at a time instead of untangling them yourself.'
-	};
-	const ANALYZER_INFO: Record<PitchAnalyzer, string> = {
-		neural:
-			'A neural model trained specifically to recognize real note pitches — the more accurate choice for actual instruments and voices.',
-		fft: "A straightforward frequency analysis with no learned model behind it — faster, but it reads raw spectral energy rather than real notes, so there's no Notes or Voices view for this one."
-	};
 
 	let showMelody = true;
 	let showInner = true;
 	let showBass = true;
-	// LINE_THRESHOLD is already the floor nothing below ever reaches `lines` (see
-	// pitchgram.ts), so the gauge only usefully ranges above it
-	let confidenceThreshold = 0.4;
+	let confidenceThreshold = 0.3;
+
+	$: musicalKey = raw?.frames.length
+		? estimateKey(raw.frames).replace('b', '♭').replace('#', '♯')
+		: ''; // 0.4 cost the lines 0.02-0.06 accuracy on annotated sets
 
 	$: showLines = viewMode === 'combined';
 	$: bassPath = showLines && showBass ? linePath(lines?.bass, confidenceThreshold) : '';
 	$: innerPath = showLines && showInner ? linePath(lines?.inner, confidenceThreshold) : '';
 	$: melodyPath = showLines && showMelody ? linePath(lines?.melody, confidenceThreshold) : '';
 
-	// Notes mode: basic-pitch's own onset/energy-tolerance note segmentation, offloaded to
-	// segment.worker.ts so melodiaTrick's ~7.4s synchronous pass (see pitchgram.ts) doesn't
-	// freeze the UI. The sliders still apply on release (on:change, not bind:value) rather
-	// than live — the worker only keeps one job at a time, so a fast drag would otherwise
-	// queue up a pile of stale ~250ms segmentation passes behind whatever's running.
+	// sliders apply on release: a live drag would queue stale segmentation jobs
 	let onsetThresh = DEFAULT_NOTE_SETTINGS.onsetThresh;
 	let frameThresh = DEFAULT_NOTE_SETTINGS.frameThresh;
 	let minNoteLen = DEFAULT_NOTE_SETTINGS.minNoteLen;
@@ -237,9 +226,7 @@
 		notesError = false;
 	}
 
-	// Voices mode: same segmentation, then grouped into monophonic streams (see groupIntoVoices
-	// in pitchgram.ts) — shares the advanced settings above since it's built on the same notes.
-	const VOICE_COLORS = ['#fb923c', '#a78bfa', '#22d3ee', '#f472b6'];
+	const VOICE_COLORS = [1, 2, 3, 4].map((n) => `var(--color-voice-${n})`);
 	let voiceStreams: RenderedNote[][] = [];
 	let voicesComputing = false;
 	let voicesError = false;
@@ -267,10 +254,7 @@
 		voicesError = false;
 	}
 
-	// horizontal (time) zoom: px per frame column, auto-fit to the container once on load.
-	// minScale is a *floor*, not a fixed constant: the scale at which the canvas exactly
-	// fills the container width. Zooming out can never go below it, so the pitchgram can
-	// never shrink to less than the viewport — same reasoning as minScaleY below.
+	// zoom floors: the grid never shrinks below the container
 	const FALLBACK_MIN_SCALE = 0.3; // used only before containerWidth is measured
 	const MAX_SCALE = 20;
 	let scale = 2;
@@ -287,20 +271,14 @@
 	}
 	$: if (!frames) fitted = false;
 
-	// vertical (pitch) zoom: px per bin row. Auto-fit once per file to the range that's
-	// actually occupied (plus a little headroom), not the full 5-octave C2..B6 grid — most
-	// clips only use 2-3 octaves of it, so fitting the whole grid leaves everything a sliver
-	// with no room for semitone labels. Mirrors the x-fit pattern below, but also has to set
-	// scrollTop once, since "fit" here means "scroll to the right rows", not just "size them".
+	// auto-fit pitch zoom to the occupied range once per file
 	const FALLBACK_MIN_SCALE_Y = 0.4; // used only before containerHeight is measured
 	const MAX_SCALE_Y = 20;
-	const OCCUPIED_THRESHOLD = 0.2; // normalized salience — same order as LINE_THRESHOLD
+	const OCCUPIED_THRESHOLD = 0.2; // inclusive on purpose: a quiet bass should still fit in view
 	const OCCUPIED_PAD_SEMITONES = 3;
 	let scaleY = 3;
 	let fittedY = false;
 	let containerHeight = 0;
-	// same floor reasoning as minScale: never let vertical zoom shrink the grid below the
-	// container's own height
 	$: minScaleY = containerHeight ? containerHeight / TOTAL_BINS : FALLBACK_MIN_SCALE_Y;
 
 	function fitVerticalZoom(frames: Float32Array[]) {
@@ -324,13 +302,7 @@
 			if (scrollEl) scrollEl.scrollTop = topRow * scaleY;
 		});
 	}
-	// Gated on status !== 'computing' (unlike the x-fit above, which is safe to latch
-	// immediately since it only depends on frames.length — always the fixed pooled column
-	// count, partial or final): fitVerticalZoom scans actual bin *content* for what's
-	// occupied, and a partial result (see computeBasicPitch's onProgress in pitchgram.ts) is
-	// only ever a prefix of the real clip. Fitting to that early would auto-zoom to whatever
-	// pitch range the first few seconds happened to use and then never re-fit once the rest
-	// of a longer clip's range comes in.
+	// wait for the final result: a partial one would fit to just the first few seconds
 	$: if (frames && containerHeight && status !== 'computing') {
 		if (!fittedY) {
 			fitVerticalZoom(frames);
@@ -341,8 +313,7 @@
 	}
 	$: if (!frames) fittedY = false;
 
-	// zooming keeps whatever content was under (clientX, clientY) fixed on screen — defaults to
-	// the viewport center for the toolbar +/- buttons, which have no cursor position of their own
+	// keeps the content under the cursor (or viewport center) fixed
 	function zoomBy(factor: number, clientX?: number) {
 		const oldScale = scale;
 		const newScale = Math.max(minScale, Math.min(MAX_SCALE, scale * factor));
@@ -378,12 +349,7 @@
 
 	let scrollEl: HTMLDivElement;
 
-	// plain wheel pans pitch/time together — a mouse wheel only ever reports deltaY, so
-	// this reduces to vertical-only there, but a trackpad's two-finger swipe reports both
-	// axes and pans diagonally as expected. ctrl zooms time (also how browsers report a
-	// trackpad pinch gesture). shift or alt force horizontal panning for wheel-only mice —
-	// vertical zoom lives on the note gutter's own wheel handler below, mirroring how a DAW
-	// zooms its piano-roll ruler independently of the timeline.
+	// wheel pans, ctrl/pinch zooms time, shift/alt force horizontal; the gutter zooms pitch
 	function onWheel(e: WheelEvent) {
 		if (e.ctrlKey) {
 			e.preventDefault();
@@ -421,12 +387,7 @@
 		return out;
 	})();
 
-	// click-drag pans (grab-and-drag, content sticks to the cursor); a plain click with no
-	// movement still seeks, same as before — distinguished by movement past a small threshold
-	// so a slightly-shaky click doesn't get misread as a pan. A second touch upgrades the
-	// gesture to a pinch: finger-distance change zooms both axes, the moving midpoint keeps
-	// whatever content was between the fingers fixed on screen — same anchor math as the
-	// mouse-wheel zoom, recomputed from the pinch's start state each move so it can't drift.
+	// drag pans, a still click seeks, two fingers pinch-zoom around their midpoint
 	let dragging = false;
 	let dragMoved = false;
 	let dragStartX = 0;
@@ -467,7 +428,21 @@
 		dragStartScrollTop = scrollEl.scrollTop;
 	}
 
+	let hoverSemitone: number | undefined;
+	function trackHover(e: PointerEvent) {
+		const rect = canvasEl.getBoundingClientRect();
+		const fromBottom = 1 - (e.clientY - rect.top) / rect.height;
+		hoverSemitone =
+			fromBottom >= 0 && fromBottom <= 1
+				? Math.min(OCTAVE_COUNT * 12 - 1, Math.floor(fromBottom * OCTAVE_COUNT * 12))
+				: undefined;
+	}
+	function noteName(semitone: number) {
+		return NOTE_NAMES[semitone % 12] + (OCTAVE_START + Math.floor(semitone / 12));
+	}
+
 	function onPointerMove(e: PointerEvent) {
+		if (e.pointerType === 'mouse') trackHover(e);
 		if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 		if (pinching && pointers.size === 2) {
 			const [a, b] = [...pointers.values()];
@@ -509,8 +484,6 @@
 		dragging = false;
 	}
 
-	// ruler scrub: click-drag along the time ruler seeks continuously, mirroring how
-	// DAW/editor rulers (Ableton, Premiere) let you drag the playhead directly
 	let scrubbing = false;
 	function onRulerPointerDown(e: PointerEvent) {
 		scrubbing = true;
@@ -525,10 +498,6 @@
 		scrubbing = false;
 	}
 
-	// keyboard equivalent for the ruler's own role="slider" — without this, arrow/Home/End
-	// only seemed to work here because +page.svelte's global shortcut handler leaked through
-	// (jumpBack/jumpForward/goToStart/goToEnd); narrowing that handler's guard removed the
-	// accident, so the ruler needs its own handling to stay keyboard-operable (WCAG 2.1.1).
 	const RULER_SEEK_STEP = 5; // seconds per arrow press, same as +page.svelte's jumpBack/jumpForward
 	function onRulerKeyDown(e: KeyboardEvent) {
 		if (!duration) return;
@@ -538,28 +507,20 @@
 		else if (e.key === 'End') seek(duration);
 		else return;
 		e.preventDefault();
-		// this div isn't an input/select/summary, so +page.svelte's global shortcut guard
-		// doesn't exempt it — without stopPropagation, the same keydown bubbles to the
-		// document listener too and double-seeks (its own jumpBack/jumpForward on the same
-		// keys, applied to the same pre-update `currentTime`). Same fix PianoReference.svelte
-		// already uses for its own note keys, for the same reason.
+		// stop it reaching the global shortcuts, which would seek a second time
 		e.stopPropagation();
 		followEnabled = false;
 	}
 
 	function seekFromEvent(e: PointerEvent) {
 		if (!duration) return;
-		// rect always comes from the canvas, even when the pointer is on the ruler below it —
-		// they share canvasWidthPx, and the ruler's own rect is offset by scroll position
+		// the ruler shares the canvas width but its own rect is scroll-offset
 		const rect = canvasEl.getBoundingClientRect();
 		const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
 		seek(duration * ratio);
 	}
 
-	// auto-follow: pin the playhead near the left edge during playback, timeline scrolling
-	// underneath it (DAW-style), rather than re-centering only once it nears an edge.
-	// Disarmed by a manual pan or ruler-scrub and re-armed when playback (re)starts, so it
-	// doesn't fight the user's own scroll position — same "follow" toggle DAWs expose.
+	// keep the playhead near the left edge while playing; a manual pan disarms until next play
 	const LEFT_ANCHOR_FRACTION = 0.1;
 	let followEnabled = true;
 	let prevPaused = paused;
@@ -576,55 +537,50 @@
 	$: if (!paused && !dragging && !scrubbing && followEnabled) followPlayhead(currentTime);
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
-	<div class="flex flex-wrap items-center justify-between gap-2 pb-2 text-xs text-stone-300">
+<div class="flex h-full min-h-0 flex-col gap-2">
+	<div class="flex flex-wrap items-center justify-between gap-2 text-sm">
 		<div class="flex items-center gap-2">
-			<label class="flex items-center gap-1">
-				<span class="hidden text-stone-500 sm:inline">Analyzer</span>
-				<select
-					bind:value={analyzer}
-					title={ANALYZER_INFO[analyzer]}
-					class="min-h-9 rounded-sm border border-stone-600 bg-stone-800 px-1.5 py-1.5"
-				>
+			<label class="flex items-center gap-1.5">
+				<span class="hidden text-graphite sm:inline">Analyzer</span>
+				<select bind:value={analyzer} class={selectCls}>
 					<option value="neural">Neural</option>
 					<option value="fft">FFT</option>
 				</select>
 			</label>
-			<label class="flex items-center gap-1">
-				<span class="hidden text-stone-500 sm:inline">View</span>
-				<select
-					bind:value={viewMode}
-					title={VIEW_MODE_INFO[viewMode]}
-					class="min-h-9 rounded-sm border border-stone-600 bg-stone-800 px-1.5 py-1.5"
-				>
+			<label class="flex items-center gap-1.5">
+				<span class="hidden text-graphite sm:inline">View</span>
+				<select bind:value={viewMode} class={selectCls}>
 					<option value="heatmap">Heatmap</option>
-					<option value="combined">Combined</option>
+					<option value="combined">Lines</option>
 					<option value="notes" disabled={!notesAvailable}>Notes</option>
 					<option value="voices" disabled={!notesAvailable}>Voices</option>
 				</select>
 			</label>
+			{#if musicalKey}
+				<output class="px-1 font-semibold whitespace-nowrap" aria-label="Key">{musicalKey}</output>
+			{/if}
 		</div>
-		<div class="flex items-center gap-1.5">
-			<span class="hidden text-stone-500 sm:inline">time</span>
+		<div class="flex items-center gap-1">
+			<div class="flex items-center rounded-lg bg-wash" role="group" aria-label="Time zoom">
+				<button class={zoomBtn} on:click={() => zoomBy(1 / 1.5)} aria-label="Zoom time out"
+					><Icon name="minus" class="h-4 w-4" /></button
+				>
+				<span class="hidden px-1 text-xs text-graphite sm:inline">Time</span>
+				<button class={zoomBtn} on:click={() => zoomBy(1.5)} aria-label="Zoom time in"
+					><Icon name="plus" class="h-4 w-4" /></button
+				>
+			</div>
+			<div class="flex items-center rounded-lg bg-wash" role="group" aria-label="Pitch zoom">
+				<button class={zoomBtn} on:click={() => zoomYBy(1 / 1.5)} aria-label="Zoom pitch out"
+					><Icon name="minus" class="h-4 w-4" /></button
+				>
+				<span class="hidden px-1 text-xs text-graphite sm:inline">Pitch</span>
+				<button class={zoomBtn} on:click={() => zoomYBy(1.5)} aria-label="Zoom pitch in"
+					><Icon name="plus" class="h-4 w-4" /></button
+				>
+			</div>
 			<button
-				class="{gridBtn} h-11 w-11"
-				on:click={() => zoomBy(1 / 1.5)}
-				aria-label="Zoom time out"><Icon name="minus" class="h-5 w-5" /></button
-			>
-			<button class="{gridBtn} h-11 w-11" on:click={() => zoomBy(1.5)} aria-label="Zoom time in"
-				><Icon name="plus" class="h-5 w-5" /></button
-			>
-			<span class="hidden text-stone-500 sm:inline">pitch</span>
-			<button
-				class="{gridBtn} h-11 w-11"
-				on:click={() => zoomYBy(1 / 1.5)}
-				aria-label="Zoom pitch out"><Icon name="minus" class="h-5 w-5" /></button
-			>
-			<button class="{gridBtn} h-11 w-11" on:click={() => zoomYBy(1.5)} aria-label="Zoom pitch in"
-				><Icon name="plus" class="h-5 w-5" /></button
-			>
-			<button
-				class="{gridBtn} ml-1 h-11 w-11"
+				class="{zoomBtn} rounded-lg bg-wash"
 				on:click={() => {
 					followEnabled = true;
 					followPlayhead(currentTime);
@@ -633,36 +589,33 @@
 				aria-label="Jump to playhead"><Icon name="viewfinder-circle" class="h-5 w-5" /></button
 			>
 			<button
-				class="{gridBtn} ml-2 h-11 w-11"
+				class="{zoomBtn} ml-1 rounded-lg"
 				on:click={onClose}
-				title="Close"
+				title="Close pitchgram"
 				aria-label="Close pitchgram"><Icon name="x-mark" class="h-5 w-5" /></button
 			>
 		</div>
 	</div>
 
 	{#if showLines}
-		<div
-			class="mb-2 flex flex-wrap items-center gap-3 rounded-sm border border-stone-700 bg-stone-900/40 px-2 py-1.5 text-xs text-stone-300"
-		>
-			<label
-				class="flex items-center gap-1"
-				title="Strongest confident pitch in C4 and up, each frame — the lead line"
-				><input type="checkbox" bind:checked={showMelody} /><span class="text-orange-400">●</span> Melody</label
+		<div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+			<label class="flex items-center gap-1.5"
+				><input type="checkbox" bind:checked={showMelody} class="accent-ink" /><span
+					class="h-0.5 w-4 rounded-full bg-voice-1"
+				></span> Melody</label
 			>
-			<label
-				class="flex items-center gap-1"
-				title="Strongest confident pitch in C3–C5, each frame — harmony between bass and melody"
-				><input type="checkbox" bind:checked={showInner} /><span class="text-violet-400">●</span> Inner
-				voices</label
+			<label class="flex items-center gap-1.5"
+				><input type="checkbox" bind:checked={showInner} class="accent-ink" /><span
+					class="h-0.5 w-4 rounded-full bg-voice-2"
+				></span> Inner</label
 			>
-			<label
-				class="flex items-center gap-1"
-				title="Strongest confident pitch in C2–C4, each frame — the lowest register"
-				><input type="checkbox" bind:checked={showBass} /><span class="text-cyan-400">●</span> Bass</label
+			<label class="flex items-center gap-1.5"
+				><input type="checkbox" bind:checked={showBass} class="accent-ink" /><span
+					class="h-0.5 w-4 rounded-full bg-voice-3"
+				></span> Bass</label
 			>
-			<label class="flex items-center gap-1" title="Hide notes the model isn't confident about">
-				<span class="text-stone-500">Confidence</span>
+			<label class="flex items-center gap-1.5">
+				<span class="text-graphite">Confidence</span>
 				<input
 					type="range"
 					min={LINE_THRESHOLD}
@@ -670,25 +623,26 @@
 					step="0.05"
 					bind:value={confidenceThreshold}
 					on:pointerup={(e) => e.currentTarget.blur()}
-					class="w-16 accent-amber-500"
+					class="w-20 accent-ink"
 				/>
-				<span class="w-9 font-mono text-stone-400">{Math.round(confidenceThreshold * 100)}%</span>
+				<span class="w-9 tabular-nums">{Math.round(confidenceThreshold * 100)}%</span>
 			</label>
 		</div>
 	{/if}
 
-	<p class="mb-2 hidden text-[11px] text-stone-500 lg:block">
-		{ANALYZER_INFO[analyzer]} · {VIEW_MODE_INFO[viewMode]}
-	</p>
-
 	{#if viewMode === 'notes' || viewMode === 'voices'}
-		<details class="mb-2 rounded-sm border border-stone-700 bg-stone-900/50 px-3 py-2 text-xs">
-			<summary class="flex cursor-pointer items-center gap-1.5 font-medium text-stone-300">
-				<Icon name="adjustments-horizontal" class="h-4 w-4" /> Advanced note settings</summary
+		<details class="group text-sm">
+			<summary
+				class="flex cursor-pointer list-none items-center gap-1.5 font-semibold text-graphite hover:text-ink"
 			>
-			<div class="mt-2 flex flex-wrap items-center gap-4 text-stone-300">
-				<label class="flex items-center gap-1" title="Minimum onset activation to start a note">
-					<span class="text-stone-500">Onset</span>
+				<Icon name="adjustments-horizontal" class="h-4 w-4" /> Note detection
+				{#if notesComputing || voicesComputing}
+					<span class="ml-1 font-normal">Working…</span>
+				{/if}
+			</summary>
+			<div class="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2">
+				<label class="flex items-center gap-1.5">
+					<span class="text-graphite">Onset</span>
 					<input
 						type="range"
 						min="0.1"
@@ -697,12 +651,12 @@
 						value={onsetThresh}
 						on:change={(e) => (onsetThresh = e.currentTarget.valueAsNumber)}
 						on:pointerup={(e) => e.currentTarget.blur()}
-						class="w-20 accent-amber-500"
+						class="w-20 accent-ink"
 					/>
-					<span class="w-9 font-mono text-stone-400">{Math.round(onsetThresh * 100)}%</span>
+					<span class="w-9 tabular-nums">{Math.round(onsetThresh * 100)}%</span>
 				</label>
-				<label class="flex items-center gap-1" title="Minimum activation for a note to stay 'on'">
-					<span class="text-stone-500">Frame</span>
+				<label class="flex items-center gap-1.5">
+					<span class="text-graphite">Sustain</span>
 					<input
 						type="range"
 						min="0.1"
@@ -711,12 +665,12 @@
 						value={frameThresh}
 						on:change={(e) => (frameThresh = e.currentTarget.valueAsNumber)}
 						on:pointerup={(e) => e.currentTarget.blur()}
-						class="w-20 accent-amber-500"
+						class="w-20 accent-ink"
 					/>
-					<span class="w-9 font-mono text-stone-400">{Math.round(frameThresh * 100)}%</span>
+					<span class="w-9 tabular-nums">{Math.round(frameThresh * 100)}%</span>
 				</label>
-				<label class="flex items-center gap-1" title="Minimum note length, in ~86fps model frames">
-					<span class="text-stone-500">Min length</span>
+				<label class="flex items-center gap-1.5">
+					<span class="text-graphite">Shortest note</span>
 					<input
 						type="range"
 						min="1"
@@ -725,47 +679,40 @@
 						value={minNoteLen}
 						on:change={(e) => (minNoteLen = e.currentTarget.valueAsNumber)}
 						on:pointerup={(e) => e.currentTarget.blur()}
-						class="w-20 accent-amber-500"
+						class="w-20 accent-ink"
 					/>
-					<span class="w-9 font-mono text-stone-400">{minNoteLen}f</span>
+					<span class="w-12 tabular-nums">{Math.round((minNoteLen / 86) * 1000)}ms</span>
 				</label>
-				<label
-					class="flex items-center gap-1"
-					title="Also start notes from large frame-amplitude jumps, not just clean onsets"
-				>
-					<input type="checkbox" bind:checked={inferOnsets} /> Infer onsets
+				<label class="flex items-center gap-1.5">
+					<input type="checkbox" bind:checked={inferOnsets} class="accent-ink" /> Infer onsets
 				</label>
-				<label
-					class="flex items-center gap-1"
-					title="Recovers notes with no clean onset. Runs in a background worker so the page stays responsive, but can take several seconds on a long or noisy clip."
-				>
-					<input type="checkbox" bind:checked={melodiaTrick} /> Melodia trick (slow)
+				<label class="flex items-center gap-1.5">
+					<input type="checkbox" bind:checked={melodiaTrick} class="accent-ink" /> Recover soft notes
+					(slow)
 				</label>
-				{#if notesComputing || voicesComputing}
-					<span class="text-stone-500">Computing notes…</span>
-				{:else if notesError || voicesError}
-					<span class="text-red-400">Couldn't compute notes — try different settings.</span>
-				{/if}
 			</div>
+			{#if notesError || voicesError}
+				<p class="mt-2 text-pencil" role="alert">Couldn't detect notes. Try other settings.</p>
+			{/if}
 		</details>
 	{/if}
 
 	{#if status === 'computing' && !frames}
-		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-stone-400">
+		<div class="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-graphite">
 			<div
-				class="h-8 w-8 animate-spin rounded-full border-2 border-stone-700 border-t-amber-400"
+				class="h-8 w-8 animate-spin rounded-full border-2 border-staff border-t-ink"
 				role="status"
-				aria-label="Analyzing pitch content"
+				aria-label="Analyzing pitch"
 			></div>
-			<p>Analyzing pitch content…</p>
+			<p>Analyzing pitch…</p>
 		</div>
 	{:else if status === 'error'}
-		<p class="flex flex-1 items-center justify-center text-sm text-red-400">
-			Couldn't analyze this file.
+		<p class="flex flex-1 items-center justify-center text-sm text-pencil" role="alert">
+			Couldn't analyze this file. Close the pitchgram and open it again to retry.
 		</p>
 	{:else if frames}
 		<div
-			class="relative min-h-0 min-w-0 flex-1 touch-none overflow-auto overscroll-contain rounded-sm bg-stone-800 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+			class="relative min-h-0 min-w-0 flex-1 touch-none overflow-auto overscroll-contain rounded-lg border border-staff bg-paper [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 			bind:this={scrollEl}
 			bind:clientWidth={containerWidth}
 			bind:clientHeight={containerHeight}
@@ -773,11 +720,11 @@
 		>
 			{#if status === 'computing'}
 				<div
-					class="pointer-events-none sticky top-1 z-20 float-right mr-1 flex w-fit items-center gap-1.5 rounded-full bg-stone-950/80 px-2 py-1 text-[11px] text-stone-300"
+					class="pointer-events-none sticky top-2 z-20 float-right mr-2 flex w-fit items-center gap-1.5 rounded-full bg-ink px-2.5 py-1 text-xs text-paper"
 					role="status"
 				>
 					<div
-						class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-stone-600 border-t-amber-400"
+						class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-paper/30 border-t-paper"
 					></div>
 					Still analyzing…
 				</div>
@@ -785,17 +732,28 @@
 			<div class="relative" style="width: {canvasWidthPx}px; height: {canvasHeightPx}px">
 				<canvas
 					bind:this={canvasEl}
-					class="absolute inset-0 h-full w-full cursor-grab active:cursor-grabbing"
+					class="absolute inset-0 h-full w-full cursor-grab transition-opacity active:cursor-grabbing {viewMode ===
+						'notes' || viewMode === 'voices'
+						? 'opacity-35'
+						: ''}"
 					style="image-rendering: pixelated; touch-action: none;"
-					aria-label="Pitchgram heatmap, {duration
+					aria-label="Pitchgram of {duration
 						? secondsToTime(duration)
-						: 'unknown length'} of analyzed audio. Drag to pan, or use the seek slider below to navigate by keyboard."
+						: 'unknown length'} of audio. Drag to pan, or use the ruler to seek."
 					on:pointerdown={onPointerDown}
 					on:pointermove={onPointerMove}
 					on:pointerup={onPointerUp}
 					on:pointercancel={onPointerCancel}
+					on:pointerleave={() => (hoverSemitone = undefined)}
 				></canvas>
 				<div class="pointer-events-none absolute inset-0" style={gridStyle}></div>
+				{#if hoverSemitone !== undefined}
+					<div
+						class="pointer-events-none absolute inset-x-0 bg-ink/10"
+						style="bottom: {(hoverSemitone / (OCTAVE_COUNT * 12)) * 100}%; height: {100 /
+							(OCTAVE_COUNT * 12)}%"
+					></div>
+				{/if}
 				<svg
 					class="pointer-events-none absolute inset-0 h-full w-full"
 					viewBox="0 0 {frames.length} {TOTAL_BINS}"
@@ -805,8 +763,8 @@
 						<path
 							d={bassPath}
 							fill="none"
-							stroke="#22d3ee"
-							stroke-width="2"
+							stroke="var(--color-voice-3)"
+							stroke-width="2.5"
 							vector-effect="non-scaling-stroke"
 						/>
 					{/if}
@@ -814,8 +772,8 @@
 						<path
 							d={innerPath}
 							fill="none"
-							stroke="#a78bfa"
-							stroke-width="2"
+							stroke="var(--color-voice-2)"
+							stroke-width="2.5"
 							vector-effect="non-scaling-stroke"
 						/>
 					{/if}
@@ -823,8 +781,8 @@
 						<path
 							d={melodyPath}
 							fill="none"
-							stroke="#fb923c"
-							stroke-width="2"
+							stroke="var(--color-voice-1)"
+							stroke-width="2.5"
 							vector-effect="non-scaling-stroke"
 						/>
 					{/if}
@@ -835,11 +793,8 @@
 								y={TOTAL_BINS - note.bin - 2}
 								width={noteWidth(note.startFrame, note.durationFrames, duration, frames.length)}
 								height={SEMITONE_BINS}
-								fill="#fbbf24"
-								stroke="#78350f"
-								stroke-width="0.15"
-								vector-effect="non-scaling-stroke"
-								opacity={0.35 + note.amplitude * 0.65}
+								fill="var(--color-ink)"
+								opacity={0.45 + note.amplitude * 0.55}
 							/>
 						{/each}
 					{/if}
@@ -852,56 +807,59 @@
 									width={noteWidth(note.startFrame, note.durationFrames, duration, frames.length)}
 									height={SEMITONE_BINS}
 									fill={VOICE_COLORS[v % VOICE_COLORS.length]}
-									stroke="#0f172a"
-									stroke-width="0.15"
-									vector-effect="non-scaling-stroke"
-									opacity={0.35 + note.amplitude * 0.65}
+									opacity={0.5 + note.amplitude * 0.5}
 								/>
 							{/each}
 						{/each}
 					{/if}
 				</svg>
 				{#if duration}
+					{#if flag > 0}
+						<div
+							class="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-pencil"
+							style="left: {(flag / duration) * 100}%"
+						></div>
+					{/if}
 					<div
-						class="pointer-events-none absolute inset-y-0 w-px bg-red-400"
-						style="left: {(flag / duration) * 100}%"
-					></div>
-					<div
-						class="pointer-events-none absolute inset-y-0 w-px bg-white/80"
+						class="pointer-events-none absolute inset-y-0 w-px bg-ink"
 						style="left: {(currentTime / duration) * 100}%"
 					></div>
 					<div class="pointer-events-none sticky top-0 z-10 h-0 w-full">
 						<div
-							class="absolute top-0 h-0 w-0 -translate-x-1/2 border-x-[5px] border-t-[7px] border-x-transparent border-t-white/90"
+							class="absolute top-0 h-0 w-0 -translate-x-1/2 border-x-[6px] border-t-[8px] border-x-transparent border-t-ink"
 							style="left: {(currentTime / duration) * 100}%"
 						></div>
 					</div>
 				{/if}
-				<!-- frozen note gutter: sticky to the left edge on time-scroll, scrolls normally with pitch-scroll -->
 				<div
-					class="sticky left-0 h-full w-8 text-[10px] text-stone-500"
+					class="sticky left-0 h-full w-9 text-[10px] font-semibold"
 					on:wheel|preventDefault|stopPropagation={onGutterWheel}
 				>
 					{#each noteLabels as label (label.top)}
 						<span
-							class="absolute -translate-y-1/2 bg-stone-800/70 px-0.5 leading-none"
+							class="absolute -translate-y-1/2 rounded-r-sm bg-paper/85 px-1 leading-none"
 							style="top: {label.top}%">{label.name}</span
 						>
 					{/each}
+					{#if hoverSemitone !== undefined}
+						<span
+							class="absolute z-10 -translate-y-1/2 rounded-r-sm bg-ink px-1 py-0.5 leading-none text-paper"
+							style="top: {(1 - (hoverSemitone + 0.5) / (OCTAVE_COUNT * 12)) * 100}%"
+							>{noteName(hoverSemitone)}</span
+						>
+					{/if}
 				</div>
 			</div>
-			<!-- frozen time ruler: sticky to the bottom on pitch-scroll, scrolls normally with time-scroll.
-			     Draggable to scrub the playhead — seek math reads canvasEl's rect (see seekFromEvent),
-			     not this element's, since scroll offset would otherwise throw off the ratio. -->
 			<div
-				class="sticky bottom-0 h-4 cursor-ew-resize text-[10px] text-stone-400"
+				class="sticky bottom-0 h-5 cursor-ew-resize bg-paper/85 text-[10px] text-graphite tabular-nums"
 				style="width: {canvasWidthPx}px; touch-action: none;"
 				role="slider"
 				tabindex="0"
-				aria-label="Seek (pitchgram ruler)"
+				aria-label="Seek"
 				aria-valuemin={0}
 				aria-valuemax={duration}
 				aria-valuenow={currentTime}
+				aria-valuetext={secondsToTime(currentTime)}
 				on:keydown={onRulerKeyDown}
 				on:pointerdown={onRulerPointerDown}
 				on:pointermove={onRulerPointerMove}
@@ -910,39 +868,36 @@
 			>
 				{#each ticks as rulerTick (rulerTick.t)}
 					<span
-						class="absolute -translate-x-1/2 bg-stone-800/70 px-0.5"
+						class="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 px-0.5"
 						style="left: {rulerTick.x}px">{secondsToTime(rulerTick.t)}</span
 					>
 				{/each}
 			</div>
 		</div>
 	{:else}
-		<p class="flex flex-1 items-center justify-center text-sm text-stone-400">
-			Load a local audio file to see its pitchgram.
+		<p class="flex flex-1 items-center justify-center text-sm text-graphite">
+			Load an audio file to see its pitchgram.
 		</p>
 	{/if}
 
-	<!-- mobile transport bar: pitchgram takes the full viewport on a phone, so this is the only
-	     way back to speed/flag controls and the piano short of closing the view — see the
-	     mobileSheet comment above. Buttons are h-11 (44px) for a real touch target. -->
-	<div class="mt-2 flex items-center justify-center gap-2 lg:hidden">
-		<button class="{gridBtn} w-11 shrink-0" on:click={behavior.jumpBack} aria-label="Back 5 seconds"
+	<div class="flex items-center justify-center gap-2 lg:hidden">
+		<button class="{gridBtn} w-12 shrink-0" on:click={behavior.jumpBack} aria-label="Back 5 seconds"
 			><Icon name="backward" class={iconSize} /></button
 		>
 		<button
-			class="{primaryBtn} w-11 shrink-0"
+			class="{primaryBtn} w-16 shrink-0"
 			on:click={behavior.togglePlayback}
 			aria-label={paused ? 'Play' : 'Pause'}
 			><Icon name={paused ? 'play' : 'pause'} class={iconSize} /></button
 		>
 		<button
-			class="{gridBtn} w-11 shrink-0"
+			class="{gridBtn} w-12 shrink-0"
 			on:click={behavior.jumpForward}
 			aria-label="Forward 5 seconds"><Icon name="forward" class={iconSize} /></button
 		>
 		<button
-			class="{gridBtn} flex-1 gap-1.5 font-mono text-xs {mobileSheet === 'controls'
-				? 'bg-stone-700'
+			class="{gridBtn} flex-1 gap-1.5 text-sm font-semibold tabular-nums {mobileSheet === 'controls'
+				? 'bg-wash-strong'
 				: ''}"
 			on:click={() => toggleSheet('controls')}
 			aria-pressed={mobileSheet === 'controls'}
@@ -951,10 +906,10 @@
 			<Icon name="adjustments-horizontal" class="h-5 w-5" />{Math.round(playbackRate * 100)}%
 		</button>
 		<button
-			class="{gridBtn} w-11 shrink-0 {mobileSheet === 'piano' ? 'bg-stone-700' : ''}"
+			class="{gridBtn} w-12 shrink-0 {mobileSheet === 'piano' ? 'bg-wash-strong' : ''}"
 			on:click={() => toggleSheet('piano')}
 			aria-pressed={mobileSheet === 'piano'}
-			aria-label="Piano reference"><Icon name="musical-note" class={iconSize} /></button
+			aria-label="Piano"><Icon name="musical-note" class={iconSize} /></button
 		>
 	</div>
 
@@ -962,24 +917,24 @@
 		<button
 			type="button"
 			transition:fade={{ duration: 150 }}
-			class="fixed inset-0 z-40 cursor-default bg-black/50 lg:hidden"
+			class="fixed inset-0 z-40 cursor-default bg-ink/30 lg:hidden"
 			on:click={() => (mobileSheet = 'none')}
 			aria-label="Close panel"
 		></button>
 		<div
 			transition:fly={{ y: 320, duration: 220, opacity: 1 }}
-			class="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto rounded-t-xl border-t border-stone-800 bg-stone-900 p-4 lg:hidden"
+			class="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] overflow-y-auto rounded-t-2xl bg-paper p-4 shadow-[0_-8px_30px_-12px_rgb(0_0_0/0.35)] lg:hidden"
 			style="padding-bottom: max(1rem, env(safe-area-inset-bottom))"
 		>
-			<div class="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-700"></div>
+			<div class="mx-auto mb-4 h-1 w-10 rounded-full bg-staff"></div>
 			{#if mobileSheet === 'controls'}
-				<div class="flex flex-col gap-3">
+				<div class="flex flex-col gap-2">
 					<div class="grid grid-cols-3 gap-2">
 						<button class={gridBtn} on:click={behavior.slowDown} aria-label="Slow down"
 							><Icon name="minus" class={iconSize} /></button
 						>
 						<button
-							class="{gridBtn} font-mono text-sm"
+							class="{gridBtn} font-semibold tabular-nums"
 							on:click={resetSpeed}
 							aria-label="Reset speed to 100%">{Math.round(playbackRate * 100)}%</button
 						>
@@ -988,14 +943,14 @@
 						>
 					</div>
 					<div class="grid grid-cols-4 gap-2">
+						<button class={gridBtn} on:click={behavior.placeFlag} aria-label="Set flag"
+							><Icon name="flag-solid" class="{iconSize} text-pencil" /></button
+						>
 						<button class={gridBtn} on:click={behavior.rewind} aria-label="Go to flag"
-							><Icon name="flag" class="{iconSize} text-orange-400" /></button
+							><Icon name="flag" class="{iconSize} text-pencil" /></button
 						>
 						<button class={gridBtn} on:click={behavior.pushFlagBack} aria-label="Push flag back 1s"
 							><Icon name="chevron-left" class={iconSize} /></button
-						>
-						<button class={gridBtn} on:click={behavior.placeFlag} aria-label="Set flag"
-							><Icon name="flag-solid" class="{iconSize} text-orange-400" /></button
 						>
 						<button class={gridBtn} on:click={behavior.resetFlag} aria-label="Reset flag"
 							><Icon name="x-mark" class={iconSize} /></button

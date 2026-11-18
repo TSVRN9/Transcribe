@@ -2,8 +2,6 @@
 	import { onMount, createEventDispatcher, onDestroy } from 'svelte';
 	import { placeholderSeek, type AudioReady, type AudioCurrentTime } from './audio';
 
-	// defaulted to match LocalAudio's props — the two are meant to be interchangeable behind
-	// the same parent contract (see audio.ts), so one shouldn't require what the other doesn't
 	export let playbackRate: number = 1;
 	export let paused: boolean = true;
 	export let volume: number = 1;
@@ -34,10 +32,7 @@
 
 	const seek = (time: number) => player?.seekTo(time, true);
 
-	// The IFrame API fires onReady once per player *instance*, not once per loaded video —
-	// so readiness (and getDuration(), which changes per video) is dispatched from
-	// onStateChange instead, which fires for every loadVideoById() call on the same
-	// instance too. CUED covers a paused/first load, PLAYING covers autoplay kicking in.
+	// onReady fires once per player, not per video, so readiness comes from onStateChange
 	const loadVideo = () => {
 		error = '';
 		if (!apiReady) return; // button is disabled + labeled "Loading player…" in this state
@@ -70,10 +65,10 @@
 					player = youtubePlayer;
 				},
 				onError: (event: YT.OnErrorEvent) => {
-					error = 'Error: Unable to play the video.';
+					error =
+						"This video can't be played here. It may be private, removed, or blocked from embedding.";
 					console.error('YouTube Player Error:', event.data);
-					// don't leave a broken instance around — the next loadVideo() should build a
-					// fresh player rather than take the loadVideoById branch on this one
+					// drop the broken instance so the next load builds a fresh player
 					player?.destroy();
 					player = undefined;
 					readyDispatch('ready', { isReady: false, audioLength: 0, seek: placeholderSeek });
@@ -110,11 +105,7 @@
 			}
 		}
 
-		// the IFrame API has no timeupdate event; polling is the only option. 250ms rather
-		// than 50ms — the transport display rounds to whole seconds anyway (secondsToTime in
-		// utils.ts), so 50ms bought nothing visible while re-rendering the parent (and
-		// PitchgramView's reactive block) 20 times a second regardless of whether anything's
-		// even playing.
+		// the IFrame API has no timeupdate event
 		intervalId = setInterval(() => {
 			if (player)
 				currentTimeDispatch('currentTime', {
@@ -129,10 +120,6 @@
 		clearInterval(intervalId);
 	});
 
-	// Per-prop reactive statements instead of one afterUpdate that fired all four calls on
-	// every render regardless of which prop actually changed — also the direct portable
-	// equivalent of $effect for a future runes migration, unlike afterUpdate (which doesn't
-	// exist in runes mode at all).
 	$: if (player && player.getPlaybackRate() !== playbackRate) player.setPlaybackRate(playbackRate);
 	$: if (player) {
 		if (paused) player.pauseVideo();
@@ -151,20 +138,20 @@
 		bind:value={videoLink}
 		placeholder="Paste YouTube link"
 		on:keydown={(e) => e.key === 'Enter' && loadVideo()}
-		class="flex-1 rounded-md bg-stone-950 px-3 py-2 text-sm placeholder:text-stone-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+		class="min-w-0 flex-1 rounded-lg border border-staff bg-paper px-3 py-2.5 placeholder:text-graphite focus:border-ink focus:outline-hidden"
 	/>
 	<button
 		on:click={loadVideo}
 		disabled={!apiReady}
 		aria-busy={!apiReady}
-		class="shrink-0 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-amber-500 disabled:cursor-not-allowed disabled:bg-stone-700 disabled:opacity-50"
+		class="shrink-0 rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-paper transition-colors hover:enabled:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-40"
 	>
-		{apiReady ? 'Load Video' : 'Loading player…'}
+		{apiReady ? 'Load video' : 'Loading player…'}
 	</button>
 </div>
 
 <div id="youtube-player"></div>
 
 {#if error}
-	<div class="mt-2 text-sm text-red-400">{error}</div>
+	<p class="text-sm text-pencil" role="alert">{error}</p>
 {/if}

@@ -1,6 +1,5 @@
 <script lang="ts">
-	// Heroicons (MIT), copied verbatim from node_modules/heroicons/24/{outline,solid} — one
-	// file with a name lookup instead of ~13 near-empty component files for a fixed icon set.
+	// Heroicons (MIT), copied from node_modules/heroicons/24/{outline,solid}
 	export let name:
 		| 'play'
 		| 'pause'

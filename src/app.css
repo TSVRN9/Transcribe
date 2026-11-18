@@ -1,27 +1,56 @@
 @import 'tailwindcss';
 
 @theme {
-	/* condensed industrial grotesk for the wordmark and equipment-style labels — everything
-	   else stays on the system sans/mono stack, kept to one deliberate accent, not a redesign
-	   of every typographic role */
-	--font-display: 'Oswald', ui-sans-serif, sans-serif;
+	--font-sans: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+
+	--color-paper: #f3f5f4;
+	--color-wash: #e2e7ea;
+	--color-wash-strong: #d2d9de;
+	--color-staff: #a3b1be;
+	--color-graphite: #56606c;
+	--color-ink: #1a2433;
+	--color-pencil: #c6372e;
+
+	--color-voice-1: #c6372e;
+	--color-voice-2: #a8700f;
+	--color-voice-3: #23795a;
+	--color-voice-4: #7448b0;
 }
 
-/*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
-
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
-*/
 @layer base {
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--color-paper: #121821;
+			--color-wash: #1c2430;
+			--color-wash-strong: #27313f;
+			--color-staff: #3d4a5a;
+			--color-graphite: #94a0ad;
+			--color-ink: #e4e9ee;
+			--color-pencil: #f0675d;
+			--color-voice-1: #f0675d;
+			--color-voice-2: #e3ac4a;
+			--color-voice-3: #5cc49c;
+			--color-voice-4: #b796f2;
+		}
+	}
+
+	/* Tailwind v4 defaults borders to currentcolor; keep a quiet default */
 	*,
 	::after,
 	::before,
 	::backdrop,
 	::file-selector-button {
-		border-color: var(--color-gray-200, currentcolor);
+		border-color: var(--color-staff, currentcolor);
+	}
+
+	html {
+		color-scheme: light dark;
+		font-optical-sizing: auto;
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--color-ink);
+		outline-offset: 2px;
 	}
 }
 
